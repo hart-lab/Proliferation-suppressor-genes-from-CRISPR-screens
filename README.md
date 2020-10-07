@@ -9,3 +9,6 @@ R scripts each have a corresponding markdown html file for easy display of gener
 
 ## Analysis code
 R scripts each have a corresponding markdown html file for easy display of generated code. 
+
+## Data
+Data files are incomplete due to file size limits. Smaller calculated tables are included in the repo.
