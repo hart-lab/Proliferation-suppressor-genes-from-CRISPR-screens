@@ -1,0 +1,451 @@
+---
+title: "figure5_with_supp"
+output: html_document
+---
+
+This code was used to generate the metabolomics plots observed in Figure 5 & supplemental figure 7
+```{r sessioninfo}
+rm(list = ls())
+if (is.integer(dev.list())){dev.off()}
+cat("\014")
+set.seed(1)
+source("functions.R")
+
+
+###modified theme_publication
+theme_Publication <- function(base_size=6, base_family="arial") {
+  (theme_foundation(base_size=base_size)#, base_family=base_family)
+   + theme(plot.title = element_text(face = "bold",
+                                     size = rel(1.2), hjust = 0.5),
+           text = element_text(),
+           panel.background = element_rect(colour = NA),
+           plot.background = element_rect(colour = NA),
+           panel.border = element_rect(colour = NA),
+           axis.title = element_text(face = "bold",size = rel(1)),
+           axis.title.y = element_text(angle=90,vjust = 2,size = 6),
+           axis.title.x = element_text(vjust = -0.2,size = 6),
+           axis.text = element_text(), 
+           axis.line = element_line(colour="black"),
+           axis.ticks = element_line(),
+           panel.grid.major = element_line(colour="#f0f0f0"),
+           panel.grid.minor = element_blank(),
+           legend.key = element_rect(colour = NA),
+           legend.key.size= unit(0.2, "cm"),
+           legend.spacing= unit(0, "cm"),
+           legend.title = element_text(face="italic"),
+           plot.margin=unit(c(10,5,5,5),"mm"),
+           strip.background=element_rect(colour="#f0f0f0",fill="#f0f0f0"),
+           strip.text = element_text(face="bold")
+   ))
+  
+}
+
+sessionInfo()
+
+```
+
+```{r data_load}
+avana_res <- read.delim("Data/avana_output_v2.txt")
+cell_line_key <- read_csv("Data/DepMap-2018q4-celllines.csv")
+metabolite_error <- read.delim("Data/metabolite_error.txt")
+```
+
+Filtering for AML data
+```{r data_manipulation}
+cell_key <- cell_line_key %>% dplyr::select(DepMap_ID,`Subtype Disease`,CCLE_Name)
+colnames(cell_key) = c('Cell_Line',"Subtype","CCLE_ID")
+cell_key <- cell_key  %>% filter(Subtype == "Acute Myelogenous Leukemia (AML)")
+
+avana_res <- avana_res %>% filter(Cell_Line %in% cell_key$Cell_Line)
+
+AML_Heatmap <- avana_res %>% filter(GENE %in% c("FASN")) %>% dplyr::select(GENE,Cell_Line,Mod_Z_Score)
+AML_Heatmap <- spread(AML_Heatmap,GENE,Mod_Z_Score)
+AML_Heatmap <- merge(AML_Heatmap,cell_key)
+AML_Heatmap <- AML_Heatmap %>% filter(Subtype == "Acute Myelogenous Leukemia (AML)")
+
+rownames(AML_Heatmap) <- map(strsplit(AML_Heatmap$CCLE,"_",fixed = TRUE), 1) %>% unlist()
+AML_Heatmap$CCLE <- map(strsplit(AML_Heatmap$CCLE,"_",fixed = TRUE), 1) %>% unlist()
+```
+
+##TAG 
+All code chunks are similar, but each code chunk is differently
+```{r TAG}
+CCLE_metabolomics <- read.csv("Data/CCLE_metabolomics_20190502.csv")
+CCLE_metabolomics <- CCLE_metabolomics %>% filter(DepMap_ID %in% AML_Heatmap$Cell_Line) %>% dplyr::select(-CCLE_ID)
+
+colnames(CCLE_metabolomics)[1] <- "Cell_Line"
+
+dat <- merge(AML_Heatmap,CCLE_metabolomics)
+
+dat <- dat %>% dplyr::select(CCLE,FASN,c("C46.0.TAG","C48.0.TAG","C50.0.TAG","C46.1.TAG","C48.1.TAG","C50.1.TAG",
+"C52.1.TAG","C54.1.TAG","C46.2.TAG","C48.2.TAG","C50.2.TAG","C52.2.TAG",
+"C54.2.TAG","C56.2.TAG","C48.3.TAG","C50.3.TAG","C52.3.TAG","C54.3.TAG",
+"C56.3.TAG","C52.4.TAG","C54.4.TAG","C56.4.TAG","C52.5.TAG","C54.5.TAG",
+"C56.5.TAG","C54.6.TAG","C56.6.TAG","C58.6.TAG","C54.7.TAG","C56.7.TAG",
+"C58.7.TAG","C56.8.TAG","C58.8.TAG"))
+
+rownames(dat) <- dat$CCLE
+dat$CCLE <- NULL
+
+dat <- dat[order(dat$FASN),]
+dat$FASN <- NULL
+
+mat_scale_mod <- dat %>% as.data.frame()
+mat_scale_mod$CCLE <- rownames(mat_scale_mod)
+mat_scale_mod$FASTS <- c("Other","Other","Other","Other","Other",
+                         "Other","Other","Other","Other","Other",
+                         "Other","FASTS","FASTS","FASTS","FASTS")
+
+mat_scale_mod <- mat_scale_mod %>% gather(Metabolite,Value,-c(CCLE,FASTS))
+
+agg = aggregate(mat_scale_mod,
+                by = list(mat_scale_mod$Metabolite,mat_scale_mod$FASTS),
+                FUN = median)
+##warnings because it tries to median on string columns
+
+agg <- agg %>% dplyr::select(Group.1,Group.2,Value)
+agg <- agg %>% spread(Group.2,Value)
+agg$diff <- agg$FASTS - agg$Other
+colnames(agg)[1] <- "metabolite"
+agg <- merge(agg,metabolite_error)
+agg$absolute_diff <- abs(agg$diff)
+agg <- agg %>% filter(abs(diff) > CV) %>% droplevels()
+
+str_split <- str_split_fixed(agg$metabolite, "\\.", 3)
+agg$un_sat_bonds <- str_split[,2] %>% as.numeric()
+
+p1 <- agg %>% 
+  ggplot(aes(y = diff,x = un_sat_bonds)) + geom_point() +
+  theme_Publication() + ylab("Log( FASTS - Other )") + xlab("Number of Unsaturated Bonds") + theme(legend.position = "none") +
+  geom_hline(yintercept = 0)
+p1
+
+```
+
+##PC 
+```{r PC}
+
+CCLE_metabolomics <- read.csv("Data/CCLE_metabolomics_20190502.csv")
+CCLE_metabolomics <- CCLE_metabolomics %>% filter(DepMap_ID %in% AML_Heatmap$Cell_Line) %>% dplyr::select(-CCLE_ID)
+
+colnames(CCLE_metabolomics)[1] <- "Cell_Line"
+
+dat <- merge(AML_Heatmap,CCLE_metabolomics)
+
+
+
+dat <- dat %>% dplyr::select(CCLE,FASN,c("C32.0.PC","C32.1.PC","C34.1.PC","C36.1.PC",
+                                          "C32.2.PC","C34.2.PC","C36.2.PC","C38.2.PC",
+                                          "C34.3.PC","C36.3.PC","C34.4.PC","C36.4.PC.A",
+                                          "C36.4.PC.B","C38.4.PC","C38.5.PC","C38.6.PC",
+                                          "C40.6.PC"))
+
+rownames(dat) <- dat$CCLE
+dat$CCLE <- NULL
+
+dat <- dat[order(dat$FASN),]
+dat$FASN <- NULL
+
+mat_scale_mod <- dat %>% as.data.frame()
+mat_scale_mod$CCLE <- rownames(mat_scale_mod)
+mat_scale_mod$FASTS <- c("Other","Other","Other","Other","Other",
+                         "Other","Other","Other","Other","Other",
+                         "Other","FASTS","FASTS","FASTS","FASTS")
+
+mat_scale_mod <- mat_scale_mod %>% gather(Metabolite,Value,-c(CCLE,FASTS))
+
+agg = aggregate(mat_scale_mod,
+                by = list(mat_scale_mod$Metabolite,mat_scale_mod$FASTS),
+                FUN = median)
+##warnings because it tries to median on string columns
+
+agg <- agg %>% dplyr::select(Group.1,Group.2,Value)
+agg <- agg %>% spread(Group.2,Value)
+agg$diff <- agg$FASTS - agg$Other
+colnames(agg)[1] <- "metabolite"
+agg <- merge(agg,metabolite_error)
+agg$absolute_diff <- abs(agg$diff)
+agg <- agg %>% filter(abs(diff) > CV)
+
+
+str_split <- str_split_fixed(agg$metabolite, "\\.", 3)
+agg$un_sat_bonds <- str_split[,2] %>% as.numeric()
+
+p1 <- agg %>% 
+  ggplot(aes(y = diff,x = un_sat_bonds)) + geom_point() +
+  theme_Publication() + ylab("Log( FASTS - Other )") + xlab("Number of Unsaturated Bonds") + theme(legend.position = "none") +
+  geom_hline(yintercept = 0)
+p1
+
+```
+
+##LPC
+```{r LPC}
+CCLE_metabolomics <- read.csv("Data/CCLE_metabolomics_20190502.csv")
+CCLE_metabolomics <- CCLE_metabolomics %>% filter(DepMap_ID %in% AML_Heatmap$Cell_Line) %>% dplyr::select(-CCLE_ID)
+
+colnames(CCLE_metabolomics)[1] <- "Cell_Line"
+
+dat <- merge(AML_Heatmap,CCLE_metabolomics)
+
+
+
+dat <- dat %>% dplyr::select(CCLE,FASN,c("C14.0.LPC","C16.0.LPC","C18.0.LPC",
+                                         "C16.1.LPC","C18.1.LPC","C18.2.LPC",
+                                         "C20.3.LPC","C20.4.LPC","C22.6.LPC"))
+
+rownames(dat) <- dat$CCLE
+dat$CCLE <- NULL
+
+dat <- dat[order(dat$FASN),]
+dat$FASN <- NULL
+
+mat_scale_mod <- dat %>% as.data.frame()
+mat_scale_mod$CCLE <- rownames(mat_scale_mod)
+mat_scale_mod$FASTS <- c("Other","Other","Other","Other","Other",
+                         "Other","Other","Other","Other","Other",
+                         "Other","FASTS","FASTS","FASTS","FASTS")
+
+mat_scale_mod <- mat_scale_mod %>% gather(Metabolite,Value,-c(CCLE,FASTS))
+
+agg = aggregate(mat_scale_mod,
+                by = list(mat_scale_mod$Metabolite,mat_scale_mod$FASTS),
+                FUN = median)
+##warnings because it tries to median on string columns
+
+agg <- agg %>% dplyr::select(Group.1,Group.2,Value)
+agg <- agg %>% spread(Group.2,Value)
+agg$diff <- agg$FASTS - agg$Other
+colnames(agg)[1] <- "metabolite"
+agg <- merge(agg,metabolite_error)
+agg$absolute_diff <- abs(agg$diff)
+agg <- agg %>% filter(abs(diff) > CV)
+
+str_split <- str_split_fixed(agg$metabolite, "\\.", 3)
+agg$un_sat_bonds <- str_split[,2] %>% as.numeric()
+
+p1 <- agg %>% 
+  ggplot(aes(y = diff,x = un_sat_bonds)) + geom_point() +
+  theme_Publication() + ylab("Log( FASTS - Other )") + xlab("Number of Unsaturated Bonds") + theme(legend.position = "none") +
+  geom_hline(yintercept = 0)
+p1
+
+```
+
+##LPE
+```{r LPE}
+CCLE_metabolomics <- read.csv("Data/CCLE_metabolomics_20190502.csv")
+CCLE_metabolomics <- CCLE_metabolomics %>% filter(DepMap_ID %in% AML_Heatmap$Cell_Line) %>% dplyr::select(-CCLE_ID)
+
+colnames(CCLE_metabolomics)[1] <- "Cell_Line"
+
+dat <- merge(AML_Heatmap,CCLE_metabolomics)
+
+
+
+dat <- dat %>% dplyr::select(CCLE,FASN,c("C16.0.LPE","C18.0.LPE","C18.1.LPE","C20.4.LPE","C22.6.LPE"))
+
+rownames(dat) <- dat$CCLE
+dat$CCLE <- NULL
+
+dat <- dat[order(dat$FASN),]
+dat$FASN <- NULL
+
+#mat_scaled <- apply(dat, MARGIN = 2, FUN = function(X) (X - min(X))/diff(range(X)))
+#rownames(mat_scaled) <- rownames(dat)
+
+mat_scale_mod <- dat %>% as.data.frame()
+mat_scale_mod$CCLE <- rownames(mat_scale_mod)
+mat_scale_mod$FASTS <- c("Other","Other","Other","Other","Other",
+                         "Other","Other","Other","Other","Other",
+                         "Other","FASTS","FASTS","FASTS","FASTS")
+
+mat_scale_mod <- mat_scale_mod %>% gather(Metabolite,Value,-c(CCLE,FASTS))
+
+agg = aggregate(mat_scale_mod,
+                by = list(mat_scale_mod$Metabolite,mat_scale_mod$FASTS),
+                FUN = median)
+##warnings because it tries to median on string columns
+
+agg <- agg %>% dplyr::select(Group.1,Group.2,Value)
+agg <- agg %>% spread(Group.2,Value)
+agg$diff <- agg$FASTS - agg$Other
+colnames(agg)[1] <- "metabolite"
+agg <- merge(agg,metabolite_error)
+agg$absolute_diff <- abs(agg$diff)
+agg <- agg %>% filter(abs(diff) > CV)
+
+str_split <- str_split_fixed(agg$metabolite, "\\.", 3)
+agg$un_sat_bonds <- str_split[,2] %>% as.numeric()
+
+p1 <- agg %>% 
+  ggplot(aes(y = diff,x = un_sat_bonds)) + geom_point() +
+  theme_Publication() + ylab("Log( FASTS - Other )") + xlab("Number of Unsaturated Bonds") + theme(legend.position = "none") +
+  geom_hline(yintercept = 0)
+p1
+
+
+```
+
+##PE
+```{r PE}
+CCLE_metabolomics <- read.csv("Data/CCLE_metabolomics_20190502.csv")
+CCLE_metabolomics <- CCLE_metabolomics %>% filter(DepMap_ID %in% AML_Heatmap$Cell_Line) %>% dplyr::select(-CCLE_ID)
+
+colnames(CCLE_metabolomics)[1] <- "Cell_Line"
+
+dat <- merge(AML_Heatmap,CCLE_metabolomics)
+
+
+
+dat <- dat %>% dplyr::select(CCLE,FASN,c("C14.0.CE","C16.0.CE","C18.0.CE","C16.1.CE",
+                                         "C18.1.CE","C18.2.CE","C18.3.CE","C20.3.CE",
+                                         "C20.4.CE","C20.5.CE","C22.6.CE"))
+
+rownames(dat) <- dat$CCLE
+dat$CCLE <- NULL
+
+dat <- dat[order(dat$FASN),]
+dat$FASN <- NULL
+
+#mat_scaled <- apply(dat, MARGIN = 2, FUN = function(X) (X - min(X))/diff(range(X)))
+#rownames(mat_scaled) <- rownames(dat)
+
+mat_scale_mod <- dat %>% as.data.frame()
+mat_scale_mod$CCLE <- rownames(mat_scale_mod)
+mat_scale_mod$FASTS <- c("Other","Other","Other","Other","Other",
+                         "Other","Other","Other","Other","Other",
+                         "Other","FASTS","FASTS","FASTS","FASTS")
+
+mat_scale_mod <- mat_scale_mod %>% gather(Metabolite,Value,-c(CCLE,FASTS))
+
+agg = aggregate(mat_scale_mod,
+                by = list(mat_scale_mod$Metabolite,mat_scale_mod$FASTS),
+                FUN = median)
+##warnings because it tries to median on string columns
+
+agg <- agg %>% dplyr::select(Group.1,Group.2,Value)
+agg <- agg %>% spread(Group.2,Value)
+agg$diff <- agg$FASTS - agg$Other
+colnames(agg)[1] <- "metabolite"
+agg <- merge(agg,metabolite_error)
+agg$absolute_diff <- abs(agg$diff)
+#browser()
+agg <- agg %>% filter(abs(diff) > CV)
+
+
+str_split <- str_split_fixed(agg$metabolite, "\\.", 3)
+agg$un_sat_bonds <- str_split[,2] %>% as.numeric()
+
+p1 <- agg %>% 
+  ggplot(aes(y = diff,x = un_sat_bonds)) + geom_point() +
+  theme_Publication() + ylab("Log( FASTS - Other )") + xlab("Number of Unsaturated Bonds") + theme(legend.position = "none") +
+  geom_hline(yintercept = 0)
+p1
+
+```
+
+##SM
+```{r SM}
+CCLE_metabolomics <- read.csv("Data/CCLE_metabolomics_20190502.csv")
+CCLE_metabolomics <- CCLE_metabolomics %>% filter(DepMap_ID %in% AML_Heatmap$Cell_Line) %>% dplyr::select(-CCLE_ID)
+
+colnames(CCLE_metabolomics)[1] <- "Cell_Line"
+
+dat <- merge(AML_Heatmap,CCLE_metabolomics)
+
+
+
+dat <- dat %>% dplyr::select(CCLE,FASN,c("C14.0.SM","C16.0.SM","C18.0.SM",
+                                         "C22.0.SM","C24.0.SM","C16.1.SM",
+                                         "C18.1.SM","C22.1.SM","C24.1.SM","C18.2.SM"))
+
+rownames(dat) <- dat$CCLE
+dat$CCLE <- NULL
+
+dat <- dat[order(dat$FASN),]
+dat$FASN <- NULL
+
+#mat_scaled <- apply(dat, MARGIN = 2, FUN = function(X) (X - min(X))/diff(range(X)))
+#rownames(mat_scaled) <- rownames(dat)
+
+mat_scale_mod <- dat %>% as.data.frame()
+mat_scale_mod$CCLE <- rownames(mat_scale_mod)
+mat_scale_mod$FASTS <- c("Other","Other","Other","Other","Other",
+                         "Other","Other","Other","Other","Other",
+                         "Other","FASTS","FASTS","FASTS","FASTS")
+
+mat_scale_mod <- mat_scale_mod %>% gather(Metabolite,Value,-c(CCLE,FASTS))
+agg = aggregate(mat_scale_mod,
+                by = list(mat_scale_mod$Metabolite,mat_scale_mod$FASTS),
+                FUN = median)
+##warnings because it tries to median on string columns
+
+agg <- agg %>% dplyr::select(Group.1,Group.2,Value)
+agg <- agg %>% spread(Group.2,Value)
+agg$diff <- agg$FASTS - agg$Other
+colnames(agg)[1] <- "metabolite"
+agg <- merge(agg,metabolite_error)
+agg$absolute_diff <- abs(agg$diff)
+agg <- agg %>% filter(abs(diff) > CV)
+
+str_split <- str_split_fixed(agg$metabolite, "\\.", 3)
+agg$un_sat_bonds <- str_split[,2] %>% as.numeric()
+
+p1 <- agg %>% 
+  ggplot(aes(y = diff,x = un_sat_bonds)) + geom_point() +
+  theme_Publication() + ylab("Log( FASTS - Other )") + xlab("Number of Unsaturated Bonds") + theme(legend.position = "none") +
+  geom_hline(yintercept = 0)
+p1
+```
+
+##DAG
+```{r DAG}
+
+CCLE_metabolomics <- read.csv("Data/CCLE_metabolomics_20190502.csv")
+CCLE_metabolomics <- CCLE_metabolomics %>% filter(DepMap_ID %in% AML_Heatmap$Cell_Line) %>% dplyr::select(-CCLE_ID)
+
+colnames(CCLE_metabolomics)[1] <- "Cell_Line"
+
+dat <- merge(AML_Heatmap,CCLE_metabolomics)
+
+
+
+dat <- dat %>% dplyr::select(CCLE,FASN,c("C34.2.DAG","C34.1.DAG","C36.2.DAG","C36.1.DAG"  ))
+
+rownames(dat) <- dat$CCLE
+dat$CCLE <- NULL
+
+dat <- dat[order(dat$FASN),]
+dat$FASN <- NULL
+
+mat_scale_mod <- dat %>% as.data.frame()
+mat_scale_mod$CCLE <- rownames(mat_scale_mod)
+mat_scale_mod$FASTS <- c("Other","Other","Other","Other","Other",
+                         "Other","Other","Other","Other","Other",
+                         "Other","FASTS","FASTS","FASTS","FASTS")
+
+mat_scale_mod <- mat_scale_mod %>% gather(Metabolite,Value,-c(CCLE,FASTS))
+agg = aggregate(mat_scale_mod,
+                by = list(mat_scale_mod$Metabolite,mat_scale_mod$FASTS),
+                FUN = median)
+##warnings because it tries to median on string columns
+
+agg <- agg %>% dplyr::select(Group.1,Group.2,Value)
+agg <- agg %>% spread(Group.2,Value)
+agg$diff <- agg$FASTS - agg$Other
+colnames(agg)[1] <- "metabolite"
+agg <- merge(agg,metabolite_error)
+agg$absolute_diff <- abs(agg$diff)
+agg <- agg %>% filter(abs(diff) > CV)
+
+str_split <- str_split_fixed(agg$metabolite, "\\.", 3)
+agg$un_sat_bonds <- str_split[,2] %>% as.numeric()
+
+p1 <- agg %>% 
+  ggplot(aes(y = diff,x = un_sat_bonds)) + geom_point() +
+  theme_Publication() + ylab("Log( FASTS - Other )") + xlab("Number of Unsaturated Bonds") + theme(legend.position = "none") +
+  geom_hline(yintercept = 0)
+p1
+```
+

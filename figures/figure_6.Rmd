@@ -1,0 +1,369 @@
+---
+title: "Figure6_with_supp"
+output: 
+  html_document:
+    fig_width: 10
+    fig_height: 10
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+The following markdown document contains the majority of code used to generate figures displayed in Figure 6,  and Supplementary Figure 9. The code is not optimized for markdown viewership, as each plot was individually saved as a pdf.
+
+##Session Info
+```{r session}
+rm(list = ls())
+if (is.integer(dev.list())){dev.off()}
+cat("\014")
+set.seed(1)
+source("functions.R")
+sessionInfo()
+```
+
+```{r data_load}
+avana_res <- read.delim("Data/avana_output_v2.txt")
+cell_line_key <- read_csv("Data/DepMap-2018q4-celllines.csv")
+cna_transposed_AML <- read.delim("Data/cna_transposed_AML.txt")
+```
+
+###Initial Data Manipulation for Figure 6A
+```{r data_manipulation}
+cell_key <- cell_line_key %>% dplyr::select(DepMap_ID,`Subtype Disease`,CCLE_Name)
+colnames(cell_key) = c('Cell_Line',"Subtype","CCLE")
+
+rownames(cna_transposed_AML) <- cna_transposed_AML$STUDY_ID
+cna_transposed_AML$STUDY_ID <- NULL
+CNA_AML <- cna_transposed_AML %>% t() %>% as.data.frame()
+
+FLT3_ITD <- c("ACH-000045","ACH-000362","ACH-000218") ### From DMSZ website
+
+###filtering for genes from Figure 5 network
+AML_Heatmap <- avana_res %>% filter(GENE %in%  c("FASN","CHP1","ACACA","GPAT4","SREBF1","CPT2","CRLS1","SQLE","ACLY","SCD","FABP5")) %>% dplyr::select(GENE,Cell_Line,Mod_Z_Score)
+AML_Heatmap <- spread(AML_Heatmap,GENE,Mod_Z_Score)
+AML_Heatmap <- merge(AML_Heatmap,cell_key)
+AML_Heatmap <- AML_Heatmap %>% filter(Subtype == "Acute Myelogenous Leukemia (AML)")
+
+###we looked at various AML subtypes, and didn't observe anything specific corresponding to FASTS
+temp <- AML_Heatmap %>% dplyr::select(Cell_Line, CCLE)
+CNA_AML <- CNA_AML %>% filter(SAMPLE_ID %in% AML_Heatmap$CCLE) %>% dplyr::select(-c(IDH2,TET2,NRAS,NPM1,BAX,DNMT3A,GATA2))
+colnames(CNA_AML)[1] <- "CCLE"
+CNA_AML <- merge(temp,CNA_AML)
+
+###simplified for manuscript
+muts <- c("FLT3","TP53","NRAS","KRAS","KMT2A")
+colnames(CNA_AML)
+muts_data <- avana_res %>% filter(GENE %in% muts) %>% filter(Cell_Line %in% AML_Heatmap$Cell_Line) %>% dplyr::select(Cell_Line,GENE,mut) %>% unique()
+muts_data <- spread(muts_data,GENE,mut)
+
+muts_data$FLT3_ITD <- 0
+muts_data$FLT3_ITD[muts_data$Cell_Line %in% FLT3_ITD] <- 1
+
+rownames(AML_Heatmap) <- map(strsplit(AML_Heatmap$CCLE,"_",fixed = TRUE), 1) %>% unlist()
+AML_Heatmap <- AML_Heatmap %>% dplyr::select(-Cell_Line,-Subtype,-CCLE)
+
+###color schemes for heatmap
+col_fun = colorRamp2(c(-10, 0, 10), c("#e60505",'white',"#69cfff"))
+col_fun2 = colorRamp2(c(0, 1), c("#f2eded","#de962a"))
+col = list(foo = col_fun2)
+
+temp1 <- muts_data %>% gather(GENE,mut,-Cell_Line)
+temp2 <- CNA_AML %>% dplyr::select(-c(CCLE,CEBPA,RUNX1,IDH1)) %>% gather(GENE,mut,-Cell_Line)
+temp1$key <- paste(temp1$GENE,temp1$Cell_Line)
+temp2 <- temp2 %>% filter(mut != 0)
+temp2$key <- paste(temp2$GENE,temp2$Cell_Line)
+temp1 <- temp1 %>% filter(key %!in% temp2$key)
+temp2$mut <- as.numeric(temp2$mut)
+muts_data <- rbind(temp1,temp2) %>% dplyr::select(-key) %>% spread(GENE,mut)
+
+# Mutation: - 1
+# Amp: 2
+# Delete: -2
+# Keeping Mut for both TSG & Amp, deletion for TSG, Amp for oncogenic 
+
+##spot checked to make sure no overlap prior
+muts_data$FLT3 <- muts_data$FLT3 + muts_data$FLT3_ITD
+muts_data$FLT3[muts_data$FLT3 == -2] <- 0
+muts_data$FLT3[muts_data$FLT3 == 2] <- 1
+
+muts_data$KRAS[muts_data$KRAS == -2] <- 0
+muts_data$KRAS[muts_data$KRAS == 2] <- 1
+
+muts_data$NRAS[muts_data$NRAS == -2] <- 0
+muts_data$NRAS[muts_data$NRAS == 2] <- 1
+
+muts_data$KMT2A[muts_data$KMT2A == 2] <- 0
+muts_data$KMT2A[muts_data$KMT2A == -2] <- 1
+
+muts_data$TP53[muts_data$TP53 == 2] <- 0
+muts_data$TP53[muts_data$TP53 == -2] <- 1
+```
+
+```{r heatmap_6A}
+ha1 <-
+  HeatmapAnnotation(
+    foo = cbind(
+      TP53 = muts_data$TP53,
+      NRAS = muts_data$NRAS,
+      KRAS = muts_data$KRAS,
+      FLT3_ITD = muts_data$FLT3,
+      KMT2A = muts_data$KMT2A
+    ),
+    annotation_name_side = "right",
+    col = col,
+    show_legend = c("foo" = FALSE),
+    show_annotation_name = c(foo = TRUE),
+    # only turn off `bar`
+    height = unit(4, "cm"),gp = gpar(fontsize = 10),
+    name = "foo_ann"
+  )
+
+Heatmap(
+  as.matrix(t(AML_Heatmap)),col = col_fun, cluster_rows = TRUE,top_annotation = ha1,
+  cluster_columns = TRUE,show_heatmap_legend = TRUE,
+  row_names_gp = gpar(fontsize = 20))
+```
+
+
+###Survival Analysis
+Resetting - Shifting gears to survival analysis
+```{r reset_1}
+rm(list = ls())
+if (is.integer(dev.list())){dev.off()}
+cat("\014")
+set.seed(1)
+source("functions.R")
+library(survival)
+library(survminer)
+```
+
+
+Loading in Target data used
+```{r survival_data}
+TARGET <- read.delim("Data/TARGET_Complete.txt")
+GDC_TARGET_Age <- read.delim("Data/GDC_Target_Age.tsv") %>%
+  dplyr::select(sample,Age.at.Diagnosis.in.Days)
+TARGET_sample_meta <- read.delim("Data/TARGET_sample_meta.tsv")
+```
+
+
+Brief data manipualtion and checking the Hazard's assumption (supp fig 9).
+```{r surv_data_manip}
+colnames(TARGET_sample_meta)[5] <- "Patient"
+colnames(GDC_TARGET_Age) <- c("Patient","Age")
+genes <- c("ACACA","ACLY","CHP1","CPT2","CRLS1","FABP5","FASN","GPAT4","SCD","SQLE","SREBF1")
+
+TARGET <- TARGET %>% filter(GENE %in% genes)
+
+TARGET <- merge(TARGET,GDC_TARGET_Age) %>% spread(GENE,Exp)
+
+TARGET$Age_Years <- TARGET$Age/365
+
+TARGET <- merge(TARGET,TARGET_sample_meta) %>% droplevels()
+
+TARGET <- TARGET %>% filter(!grepl("Recurrent",sample_type)) %>% droplevels()
+
+fit.coxph <- coxph(Surv(OS.time, X_EVENT)~CHP1,data = TARGET)
+test.ph <- cox.zph(fit.coxph)
+ggcoxzph(test.ph)
+
+fit.coxph <- coxph(Surv(OS.time, X_EVENT)~GPAT4, data = TARGET)
+test.ph <- cox.zph(fit.coxph)
+ggcoxzph(test.ph)
+
+fit.coxph <- coxph(Surv(OS.time, X_EVENT)~FASN, data = TARGET)
+test.ph <- cox.zph(fit.coxph)
+ggcoxzph(test.ph)
+
+fit.coxph <- coxph(Surv(OS.time, X_EVENT)~ACACA, data = TARGET)
+test.ph <- cox.zph(fit.coxph)
+ggcoxzph(test.ph)
+
+fit.coxph <- coxph(Surv(OS.time, X_EVENT)~SQLE, data = TARGET)
+test.ph <- cox.zph(fit.coxph)
+ggcoxzph(test.ph)
+
+fit.coxph <- coxph(Surv(OS.time, X_EVENT)~CPT2, data = TARGET)
+test.ph <- cox.zph(fit.coxph)
+ggcoxzph(test.ph)
+
+fit.coxph <- coxph(Surv(OS.time, X_EVENT)~CPT2, data = TARGET)
+test.ph <- cox.zph(fit.coxph)
+ggcoxzph(test.ph)
+
+fit.coxph <- coxph(Surv(OS.time, X_EVENT)~ACLY, data = TARGET)
+test.ph <- cox.zph(fit.coxph)
+ggcoxzph(test.ph)
+
+fit.coxph <- coxph(Surv(OS.time, X_EVENT)~SREBF1, data = TARGET)
+test.ph <- cox.zph(fit.coxph)
+ggcoxzph(test.ph)
+
+fit.coxph <- coxph(Surv(OS.time, X_EVENT)~SCD, data = TARGET)
+test.ph <- cox.zph(fit.coxph)
+ggcoxzph(test.ph)
+
+fit.coxph <- coxph(Surv(OS.time, X_EVENT)~CRLS1, data = TARGET)
+test.ph <- cox.zph(fit.coxph)
+ggcoxzph(test.ph)
+
+fit.coxph <- coxph(Surv(OS.time, X_EVENT)~FABP5, data = TARGET)
+test.ph <- cox.zph(fit.coxph)
+ggcoxzph(test.ph)
+
+fit.coxph <- coxph(Surv(OS.time, X_EVENT)~Age_Years, data = TARGET)
+test.ph <- cox.zph(fit.coxph)
+ggcoxzph(test.ph)
+```
+
+
+Examining the HR for each variable + forest plot
+```{r surv_data_forest}
+covariates <- c(genes,"Age_Years")
+univ_formulas <- sapply(covariates, function(x) as.formula(paste('Surv(OS.time, X_EVENT)~', x)))
+
+univ_models <- lapply( univ_formulas, function(x){coxph(x, data = TARGET)})
+# Extract data, function adapted from http://www.sthda.com/english/wiki/cox-proportional-hazards-model
+univ_results <- lapply(univ_models,
+                       function(x){ 
+                         x <- summary(x)
+                         p.value<-signif(x$wald["pvalue"], digits=2)
+                         wald.test<-signif(x$wald["test"], digits=2)
+                         beta<-signif(x$coef[1], digits=2);#coeficient beta
+                         HR <-signif(x$coef[2], digits=2);#exp(beta)
+                         HR.confint.lower <- signif(x$conf.int[,"lower .95"], 2)
+                         HR.confint.upper <- signif(x$conf.int[,"upper .95"],2)
+                         HR_comb <- paste0(HR, " (",
+                                      HR.confint.lower, "-", HR.confint.upper, ")")
+                         res<-c(beta, HR, wald.test, p.value,HR.confint.lower,HR.confint.upper,HR_comb)
+                         names(res)<-c("beta", "HR", "wald.test", 
+                                       "p.value","HR_CI_low","HR_CI_high","HR_comb")
+                         return(res)
+                         #return(exp(cbind(coef(x),confint(x))))
+                       })
+
+res <- t(as.data.frame(univ_results, check.names = FALSE)) %>% as.data.frame()
+
+res$row_a <- paste(row.names(res),", HR = ",res$HR_comb,", p = ",res$p.value,sep = "")
+
+res <- res[covariates,]
+
+res$row_a <- factor(res$row_a, levels = res$row_a) %>% fct_rev()
+
+ggplot(res, aes(x = HR, y = row_a)) +
+  geom_point(size = 3,stat = "identity") + 
+  geom_errorbar(aes(xmax = HR_CI_high, xmin = HR_CI_low), size = 0.5) + 
+  xlab("Hazard Ratio") + ylab("") + theme_cowplot() 
+
+```
+
+Plotting Survival Curves
+```{r GPAT4_curve}
+TARGET_temp <- TARGET %>% unique()
+
+gene_test <- "GPAT4"
+
+gene_test_qs <- quantile(x = TARGET[,gene_test],c(0.75))
+
+TARGET_gene_q1_q2_q3 <- TARGET_temp %>% filter(TARGET[,gene_test] < gene_test_qs[1]) %>% droplevels() 
+TARGET_gene_q4 <- TARGET_temp %>% filter(TARGET[,gene_test] >= gene_test_qs[1]) %>% droplevels() 
+
+q1_3 <- nrow(TARGET_gene_q1_q2_q3)
+q4 <- nrow(TARGET_gene_q4)
+
+TARGET_temp$type <- NULL
+TARGET_temp$type <- paste(gene_test,"Other",q1_3,sep = "_")
+TARGET_temp$type[TARGET_temp$Patient %in% TARGET_gene_q4$Patient] = paste(gene_test,"q4",q4,sep = "_")
+
+fit <- survfit(Surv(OS.time, X_EVENT) ~ type, data = TARGET_temp)
+
+ggsurvplot(fit,
+           conf.int = FALSE,
+           risk.table.col = "strata", # Change risk table color by groups
+           ggtheme = theme_bw(), # Change ggplot2 theme
+           # palette = c("#E7B800", "#2E9FDF"),
+           pval = TRUE) + ggtitle(gene_test)
+
+```
+
+```{r CHP1_curve}
+gene_test <- "CHP1"
+
+gene_test_qs <- quantile(x = TARGET[,gene_test],c(0.75))
+
+TARGET_gene_q1_q2_q3 <- TARGET_temp %>% filter(TARGET[,gene_test] < gene_test_qs[1]) %>% droplevels() 
+TARGET_gene_q4 <- TARGET_temp %>% filter(TARGET[,gene_test] >= gene_test_qs[1]) %>% droplevels() 
+
+q1_3 <- nrow(TARGET_gene_q1_q2_q3)
+q4 <- nrow(TARGET_gene_q4)
+
+TARGET_temp$type <- NULL
+TARGET_temp$type <- paste(gene_test,"Other",q1_3,sep = "_")
+TARGET_temp$type[TARGET_temp$Patient %in% TARGET_gene_q4$Patient] = paste(gene_test,"q4",q4,sep = "_")
+
+fit <- survfit(Surv(OS.time, X_EVENT) ~ type, data = TARGET_temp)
+
+ggsurvplot(fit,
+           conf.int = FALSE,
+           risk.table.col = "strata", # Change risk table color by groups
+           ggtheme = theme_bw(), # Change ggplot2 theme
+           # palette = c("#E7B800", "#2E9FDF"),
+           pval = TRUE) + ggtitle(gene_test)
+
+```
+
+Resetting again to bring up age of various AML cohorts
+```{r reset_2}
+rm(list = ls())
+if (is.integer(dev.list())){dev.off()}
+cat("\014")
+set.seed(1)
+source("functions.R")
+```
+
+```{r AML_ages}
+GDC_TARGET_Age <- read.delim("Data/GDC_Target_Age.tsv") 
+colnames(GDC_TARGET_Age) <- c("Sample","Samples","Age_Days","Exp")
+GDC_TARGET_Age$Age <- round(GDC_TARGET_Age$Age_Days/365,digits =0)
+GDC_TARGET_Age <- GDC_TARGET_Age %>% dplyr::select(Age,Sample,Exp)
+GDC_TARGET_Age$Type <- "TARGET"
+
+OSHU_AML_Age <- read_csv("Data/AML_OSHU_Age.csv")
+colnames(OSHU_AML_Age) <- c("Age","Sample","Exp")
+OSHU_AML_Age$Type <- "OSHU"
+
+TCGA_AML_Age <- read.delim("Data/LAML_clinical_meta.tsv")
+TCGA_AML_Age <- TCGA_AML_Age %>% dplyr::select(age_at_initial_pathologic_diagnosis,sample,FASN)
+colnames(TCGA_AML_Age) <- c("Age","Sample","Exp")
+TCGA_AML_Age$Type <- "TCGA"
+
+AML_Age_Data <- do.call("rbind", list(TCGA_AML_Age,GDC_TARGET_Age,OSHU_AML_Age))
+
+###Filtering for patients with expression data
+AML_Age_Data <- AML_Age_Data[complete.cases(AML_Age_Data$Exp), ]
+
+AML_Age_Data %>% ggplot(aes(Type,as.numeric(Age),color = Type)) + geom_beeswarm() + theme_Publication() + ylab("Age") + xlab("")
+```
+
+
+Resetting again to bring up to observed difference in age of observed phenotype
+```{r reset_3}
+rm(list = ls())
+if (is.integer(dev.list())){dev.off()}
+cat("\014")
+set.seed(1)
+source("functions.R")
+```
+
+```{r age_cell_line}
+avana_res <- read.delim("Data/avana_output_v2.txt") %>% filter(GENE == "FASN")
+AML_age <- read.delim("Data/AML_age.txt") ### curated manually from cellasaurus 
+
+avana_res <- avana_res %>% dplyr::select(Cell_Line,Mod_Z_Score)
+
+avana_res <- merge(avana_res,AML_age,all.x = TRUE)
+
+avana_res %>% ggplot(aes(Mod_Z_Score,Age)) + geom_point(size = 2) + theme_Publication() + xlab("FASN Shuffled Z-Score")
+
+```

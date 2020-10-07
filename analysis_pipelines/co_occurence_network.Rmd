@@ -1,0 +1,248 @@
+---
+title: "Co-Occurence Network"
+output: html_document
+---
+
+This code was used to generate the PS network, as well as various networks using shifting cutoffs. This code takes a while, so various parts are commented out and just used as examples.
+
+###Original Co-Occur Network
+```{r session}
+rm(list = ls())
+if (is.integer(dev.list())){dev.off()}
+cat("\014")
+set.seed(1)
+source("functions.R")
+sessionInfo()
+```
+
+```{r loading_data}
+library(parallel) ## used for parallel processing - to speed up the loop
+##### Fisher's exact edges code
+
+###Essentially the tests for gene fisher tests for all gene comparisons.
+
+avana_res <- read.delim("Data/avana_output_v2.txt") %>% dplyr::select(-c(MEAN_FC_Shuffle_Mean,SD_Shuffle_Mean,MEAN_FC,n,n_above,percentage,geneScores,GENE_Exp,Exp,Mean_FC_Z_Score,ranking))
+
+temp_hits <- avana_res %>% filter(hit == 1) %>% droplevels()
+temp_avana <- avana_res %>% filter(GENE %in% temp_hits$GENE)
+tab <- table(temp_hits$GENE)
+tab <- tab[tab>1]
+g1 = c()
+g2 = c()
+fish_p = c()
+count = c()
+
+temp_tab <- tab
+```
+
+Generating the network of the actual cutoff
+```{r original_network}
+for (i in 1:length(tab)){
+  print(i)
+  GENE1 = names(tab)[i]
+  temp_tab <- temp_tab[names(temp_tab) != GENE1]
+  temp_p <- mclapply(X = as.array(names(temp_tab)),FUN = function(X) fisher_edges(GENE1 = GENE1,GENE2 = X,data_feed = temp_avana), mc.cores = 15)
+  count = c(count,(temp_tab + tab[i]))
+  g1 = c(g1,rep(GENE1, length(temp_tab)))
+  g2 = c(g2,as.array(names(temp_tab)))
+  fish_p = c(fish_p, unlist(temp_p))
+}
+
+fisher_results <- data.frame(g1,g2,fish_p,count)
+#write_delim(fisher_results,"Data/fisher_edges_tsg_v2_2_05.txt",delim = "\t")
+
+###Using a FDR cutoff of 0.01 
+fisher_results$fish_FDR = p.adjust(fisher_results$fish_p,method = "fdr")
+fisher_results_fil <- fisher_results %>% filter(fish_FDR < 0.01)
+#write_delim(fisher_results_fil,"Data/fisher_results_res_fdr_0.01_2_7_20.txt",delim = "\t")
+```
+
+This code chunk evaluates the percentage of the network observed in Human Net.
+```{r orig_net_humannet}
+HumanNet.FN <- read.delim("Data/HumanNet-FN.tsv", header = FALSE)
+colnames(HumanNet.FN) = c("GENE1", "GENE2", "FN_Score")
+
+fisher_results_HuNet <- fisher_results_fil
+
+V1 <- as.vector(as.character(fisher_results_HuNet$g1)) #%>% unique()
+entrez_IDS <- mapIds(org.Hs.eg.db, V1, 'ENTREZID', 'SYMBOL')
+fisher_results_HuNet$GENE1_entrez_ID = entrez_IDS
+
+V2 <- as.vector(as.character(fisher_results_HuNet$g2)) #%>% unique()
+entrez_IDS <- mapIds(org.Hs.eg.db, V2, 'ENTREZID', 'SYMBOL')
+fisher_results_HuNet$GENE2_entrez_ID = entrez_IDS
+fisher_results_HuNet$Hunet = 0
+
+V1 <- as.vector(as.character(fisher_results$g1)) #%>% unique()
+entrez_IDS <- mapIds(org.Hs.eg.db, V1, 'ENTREZID', 'SYMBOL')
+fisher_results$GENE1_entrez_ID = entrez_IDS
+
+V2 <- as.vector(as.character(fisher_results$g2)) #%>% unique()
+entrez_IDS <- mapIds(org.Hs.eg.db, V2, 'ENTREZID', 'SYMBOL')
+fisher_results$GENE2_entrez_ID = entrez_IDS
+fisher_results$Hunet = 0
+hunetgenes <- c(HumanNet.FN$GENE1, HumanNet.FN$GENE2) %>% unique()
+
+rm(V1, V2, entrez_IDS)
+
+fisher_results <-  fisher_results %>% filter(GENE1_entrez_ID %in% hunetgenes) %>% filter(GENE2_entrez_ID %in% hunetgenes)
+fisher_results_HuNet <- fisher_results_HuNet %>% filter(GENE1_entrez_ID %in% hunetgenes) %>% filter(GENE2_entrez_ID %in% hunetgenes)
+fisher_results_fil <- fisher_results %>% filter(g1 == "")
+
+genes <-
+  unique(c(
+    as.character(fisher_results$g1),
+    as.character(fisher_results$g2)
+  ))
+gene_entrez <-
+  unique(c(
+    as.character(fisher_results$GENE1_entrez_ID),
+    as.character(fisher_results$GENE2_entrez_ID)
+  ))
+HumanNet.FN <-
+  HumanNet.FN %>% filter(GENE1 %in% gene_entrez) %>% filter(GENE2 %in% gene_entrez)
+
+###Checking resulting network human net overlap
+for (i in 1:nrow(fisher_results_HuNet)) {
+  #print(i)
+  GENE1_entrez = fisher_results_HuNet[i, "GENE1_entrez_ID"]
+  GENE2_entrez = fisher_results_HuNet[i, "GENE2_entrez_ID"]
+  temp_hunet <-
+    HumanNet.FN %>% filter(GENE1 == GENE1_entrez) %>% filter(GENE2 == GENE2_entrez)
+  if (nrow(temp_hunet) != 0) {
+    fisher_results_HuNet[i, "Hunet"] = 1
+  }
+  temp_hunet2 <-
+    HumanNet.FN %>% filter(GENE1 == GENE2_entrez) %>% filter(GENE2 == GENE1_entrez)
+  if (nrow(temp_hunet2) != 0) {
+    fisher_results_HuNet[i, "Hunet"] = 1
+  }
+}
+
+```
+
+###Testing Cutoffs
+This next code chunk is used to combine the previous two code chunks and evaluate at different cutoffs (used for supplemental figure 4b). This code takes a little while to run, so it is commented out and only shows an example of one interation.
+```{r testing_cutoffs}
+real_sum_edges <- sum(fisher_results_HuNet$Hunet) / nrow(fisher_results_HuNet)
+num_genes_avail <- c(length(tab))
+gene_network <- c(length(unique(c(fisher_results_HuNet$g1,fisher_results_HuNet$g2))))
+interval_Z <- c(min(temp_hits$Mod_Z_Score))
+percent_edges <- c(real_sum_edges)
+#interval_seq <- seq(3.5, 8, 0.25)
+interval_seq <- c(6.5) ###choosing a later data point
+
+rm(fisher_results,HumanNet.FN,fisher_results_fil,fisher_results_HuNet,temp_avana,temp_hits,temp_hunet,temp_hunet2,g1,g2,gene_entrez,hunetgenes,genes)
+
+for (interval in interval_seq){
+  #browser()
+  print(interval)
+  temp_hits <- avana_res %>% filter(Mod_Z_Score > interval) %>% droplevels()
+  temp_avana <- avana_res %>% filter(GENE %in% temp_hits$GENE)
+  temp_avana$hit = 0
+  temp_avana$hit[temp_avana$Mod_Z_Score > interval] = 1
+  
+  tab <- table(temp_hits$GENE)
+  tab <- tab[tab>1]
+  
+  g1 = c()
+  g2 = c()
+  fish_p = c()
+  count = c()
+  
+  temp_tab <- tab
+  num_genes_avail <- c(num_genes_avail,length(tab))
+  
+  for (i in 1:length(tab)){
+    print(i)
+    GENE1 = names(tab)[i]
+    temp_tab <- temp_tab[names(temp_tab) != GENE1]
+    temp_p <- mclapply(X = as.array(names(temp_tab)),FUN = function(X) fisher_edges(GENE1 = GENE1,GENE2 = X,data_feed = temp_avana), mc.cores = 20)
+    count = c(count,(temp_tab + tab[i]))
+    g1 = c(g1,rep(GENE1, length(temp_tab)))
+    g2 = c(g2,as.array(names(temp_tab)))
+    fish_p = c(fish_p, unlist(temp_p))
+
+  }
+  fisher_results <- data.frame(g1,g2,fish_p,count)
+  
+  fisher_results_fil <- fisher_results
+  
+  fisher_results_fil$fish_FDR = p.adjust(fisher_results_fil$fish_p,method = "fdr")
+  
+  fisher_results_fil <- fisher_results_fil %>% filter(fish_FDR < 0.01)
+  
+  HumanNet.FN <- read.delim("Data/HumanNet-FN.tsv", header = FALSE)
+  colnames(HumanNet.FN) = c("GENE1", "GENE2", "FN_Score")
+  
+  ###Human Net files, FN is Human net without coessential network.
+  
+  fisher_results_HuNet <- fisher_results_fil
+  
+  V1 <- as.vector(as.character(fisher_results_HuNet$g1)) #%>% unique()
+  entrez_IDS <- mapIds(org.Hs.eg.db, V1, 'ENTREZID', 'SYMBOL')
+  fisher_results_HuNet$GENE1_entrez_ID = entrez_IDS
+  
+  V2 <- as.vector(as.character(fisher_results_HuNet$g2)) #%>% unique()
+  entrez_IDS <- mapIds(org.Hs.eg.db, V2, 'ENTREZID', 'SYMBOL')
+  fisher_results_HuNet$GENE2_entrez_ID = entrez_IDS
+  fisher_results_HuNet$Hunet = 0
+  
+  V1 <- as.vector(as.character(fisher_results$g1)) #%>% unique()
+  entrez_IDS <- mapIds(org.Hs.eg.db, V1, 'ENTREZID', 'SYMBOL')
+  fisher_results$GENE1_entrez_ID = entrez_IDS
+  
+  V2 <- as.vector(as.character(fisher_results$g2)) #%>% unique()
+  entrez_IDS <- mapIds(org.Hs.eg.db, V2, 'ENTREZID', 'SYMBOL')
+  fisher_results$GENE2_entrez_ID = entrez_IDS
+  fisher_results$Hunet = 0
+  hunetgenes <- c(HumanNet.FN$GENE1, HumanNet.FN$GENE2) %>% unique()
+  
+  rm(V1, V2, entrez_IDS)
+  
+  ###Identifying genes within human net
+  
+  fisher_results <-  fisher_results %>% filter(GENE1_entrez_ID %in% hunetgenes) %>% filter(GENE2_entrez_ID %in% hunetgenes)
+  fisher_results_HuNet <- fisher_results_HuNet %>% filter(GENE1_entrez_ID %in% hunetgenes) %>% filter(GENE2_entrez_ID %in% hunetgenes)
+  fisher_results_fil <- fisher_results %>% filter(g1 == "")
+  
+  genes <-
+    unique(c(
+      as.character(fisher_results$g1),
+      as.character(fisher_results$g2)
+    ))
+  gene_entrez <-
+    unique(c(
+      as.character(fisher_results$GENE1_entrez_ID),
+      as.character(fisher_results$GENE2_entrez_ID)
+    ))
+  HumanNet.FN <-
+    HumanNet.FN %>% filter(GENE1 %in% gene_entrez) %>% filter(GENE2 %in% gene_entrez)
+  
+  ###Checking resulting network human net overlap
+  for (i in 1:nrow(fisher_results_HuNet)) {
+    #print(i)
+    GENE1_entrez = fisher_results_HuNet[i, "GENE1_entrez_ID"]
+    GENE2_entrez = fisher_results_HuNet[i, "GENE2_entrez_ID"]
+    temp_hunet <-
+      HumanNet.FN %>% filter(GENE1 == GENE1_entrez) %>% filter(GENE2 == GENE2_entrez)
+    if (nrow(temp_hunet) != 0) {
+      fisher_results_HuNet[i, "Hunet"] = 1
+    }
+    temp_hunet2 <-
+      HumanNet.FN %>% filter(GENE1 == GENE2_entrez) %>% filter(GENE2 == GENE1_entrez)
+    if (nrow(temp_hunet2) != 0) {
+      fisher_results_HuNet[i, "Hunet"] = 1
+    }
+  }
+  interval_Z <- c(interval_Z,interval)
+  gene_network <- c(gene_network,length(unique(c(fisher_results_HuNet$g1,fisher_results_HuNet$g2))))
+  sum_edges <- sum(fisher_results_HuNet$Hunet) / nrow(fisher_results_HuNet)
+  percent_edges <- c(percent_edges,sum_edges)
+  rm(fisher_results,HumanNet.FN,fisher_results_fil,fisher_results_HuNet,temp,temp_avana,temp_hits,temp_hunet,temp_hunet2,g1,g2,gene_entrez,hunetgenes,genes)
+}   
+#result_df<- data.frame(interval_Z,num_genes_avail,percent_edges,gene_network)
+#write_delim(result_df,"Data/Human_net_cutoff_results.txt",delim = "\t")
+
+
+```

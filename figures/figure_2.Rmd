@@ -1,0 +1,986 @@
+---
+title: "Figure2_with_supp"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+The following markdown document contains the majority of code used to generate figures displayed in Figure 2 and Supplemental Figure 4. Figure 2B (network pipeline) was made using Illustrator, and Figure 2C (network) was made using Cytoscape.
+
+```{r session}
+rm(list = ls())
+if (is.integer(dev.list())){dev.off()}
+cat("\014")
+set.seed(1)
+source("functions.R")
+sessionInfo()
+```
+
+##Figure 2A - Complex heatmap demonstrating network approach
+The plot was made twice and then just overlaid in illustrator. Legends made with code from stackoverflow (https://stackoverflow.com/questions/9314658/colorbar-from-custom-colorramppalette)
+```{r complex_heatmap_fish_fdr}
+
+###Complex heatmap 2A
+
+avana_res <- read.delim("Data/avana_output_v2.txt")
+temp_hits <- avana_res %>% filter(hit == 1) %>% droplevels()
+
+picked_genes <-
+  c(
+    "TP53",
+    "TP53BP1",
+    "CDKN1A",
+    "CHEK2",
+    "MAP4K4",
+    "TAOK1",
+    "KIRREL1",
+    "NF2",
+    "TSC1",
+    "TSC2",
+    "PTEN",
+    "AMOTL2",
+    "LATS2",
+    "PDCD10",
+    "NRP1"
+  )
+
+temp_hits <-
+  avana_res %>% filter(GENE %in% picked_genes) %>% #filter(Cosmic_TSG == 1) %>%
+  droplevels() %>% dplyr::select(GENE, Cell_Line, hit) %>% unique()
+
+g1 = c()
+g2 = c()
+Freq = c()
+
+for (i in 1:length(picked_genes)) {
+  for (j in i:length(picked_genes)) {
+    if (i != j) {
+      gene1 = picked_genes[i]
+      gene2 = picked_genes[j]
+      temp_cells <-
+        temp_hits %>% filter(GENE %in% c(gene1, gene2)) %>% filter(hit == 1) %>% droplevels() %>% pull(Cell_Line) %>% as.vector()
+      num <- length(temp_cells[duplicated(temp_cells)])
+      g1 = c(g1, gene1)
+      g2 = c(g2, gene2)
+      Freq = c(Freq, num)
+      
+    }
+  }
+}
+
+obs <- data.frame(g1, g2, Freq)
+obs2 <- data.frame(g2, g1, Freq)
+colnames(obs2) = c("g1", "g2", "Freq")
+obs <- rbind(obs, obs2)
+
+fisher_results <- read.delim("Data/fisher_edges_tsg_v2_2_05.txt")
+fisher_results$FDR = p.adjust(fisher_results$fish_p, method = "fdr")
+
+fisher_results <-
+  fisher_results %>% filter(g1 %in% picked_genes) %>% filter(g2 %in% picked_genes) %>% dplyr::select(g1, g2, FDR) %>% spread(g2, FDR)
+
+rownames(fisher_results) <- fisher_results$g1
+fisher_results$g1 <- NULL
+fisher_results[is.na(fisher_results)] <- 0
+
+dist.eucl <- dist(fisher_results, method = "euclidean")
+
+mat <- obs %>% spread(g2, Freq)
+rownames(mat) <- mat$g1
+mat$g1 <- NULL
+
+my_palette <-
+  colorRampPalette(c("#6c74d9", "#bdbfd9", "white"))(n = 100)
+
+fisher_results_t <- as.matrix(fisher_results)
+head(fisher_results_t)
+head(mat)
+
+cluster = hclust(dist.eucl)
+
+mat <- obs %>% spread(g2, Freq)
+rownames(mat) <- mat$g1
+mat$g1 <- NULL
+mat <- mat[cluster$labels, cluster$labels]
+
+mat
+
+fisher_results_t <- round(as.matrix(fisher_results), 3)
+
+my_palette <-
+  colorRampPalette(c("#6c74d9", "#cacbd9", "white"))(n = 100)
+
+heatmap.2(
+  fisher_results_t,
+  Rowv = as.dendrogram(cluster),
+  # apply default clustering method
+  Colv = as.dendrogram(cluster),
+  cellnote = fisher_results_t,
+  col = my_palette,
+  notecol = "black",
+  density.info = "none",
+  key = FALSE,
+  trace = "none"
+)
+
+# color.bar <-
+#   function(lut,
+#            min,
+#            max = -min,
+#            nticks = 11,
+#            ticks = seq(min, max, len = nticks),
+#            title = '') {
+#     scale = (length(lut) - 1) / (max - min)
+#     
+#     dev.new(width = 1.75, height = 5)
+#     plot(
+#       c(0, 10),
+#       c(min, max),
+#       type = 'n',
+#       bty = 'n',
+#       xaxt = 'n',
+#       xlab = '',
+#       yaxt = 'n',
+#       ylab = '',
+#       main = title
+#     )
+#     axis(2, ticks, las = 1)
+#     for (i in 1:(length(lut) - 1)) {
+#       y = (i - 1) / scale + min
+#       rect(0, y, 10, y + 1 / scale, col = lut[i], border = NA)
+#     }
+#   }
+# color.bar(my_palette, min = 0.000, max = 1.000)
+
+# color.bar(my_palette, min = 0, max = 45)
+```
+
+Co-Occurence Heatmap
+```{r complex_heatmap_counts}
+my_palette <-
+  colorRampPalette(c("white", "#c4a068", "#cf953a"))(n = 45)
+heatmap.2(
+  as.matrix(mat),
+  Rowv = as.dendrogram(cluster),
+  # apply default clustering method
+  Colv = as.dendrogram(cluster),
+  cellnote = mat,
+  col = my_palette,
+  notecol = "black",
+  trace = "none",
+  key = FALSE
+)
+```
+
+##Supplemental Figure 4 - HumanNet enrichment scoring
+Includes empirical p-value calculation.
+```{r humannet_enrich}
+rm(list = ls())
+if (is.integer(dev.list())) {
+  dev.off()
+}
+cat("\014")
+
+set.seed(1)
+source("functions.R")
+
+HS.CE <-
+  read.delim("Data/HS-CE.tsv",
+             header = FALSE,
+             comment.char = "#")
+HumanNet.FN <- read.delim("Data/HumanNet-FN.tsv", header = FALSE)
+
+###Human Net files, CE = Coessentiality, FN is Human net without coessential network.
+
+fisher_results <- read.delim("Data/fisher_edges_tsg_v2_2_05.txt")
+fisher_results_HuNet <-
+  read.delim("./Data/fisher_results_res_fdr_0.01_2_7_20.txt")
+colnames(HumanNet.FN) = c("GENE1", "GENE2", "FN_Score")
+
+V1 <- as.vector(as.character(fisher_results_HuNet$g1)) #%>% unique()
+entrez_IDS <- mapIds(org.Hs.eg.db, V1, 'ENTREZID', 'SYMBOL')
+fisher_results_HuNet$GENE1_entrez_ID = entrez_IDS
+
+V2 <- as.vector(as.character(fisher_results_HuNet$g2)) #%>% unique()
+entrez_IDS <- mapIds(org.Hs.eg.db, V2, 'ENTREZID', 'SYMBOL')
+fisher_results_HuNet$GENE2_entrez_ID = entrez_IDS
+fisher_results_HuNet$Hunet = 0
+
+V1 <- as.vector(as.character(fisher_results$g1)) #%>% unique()
+entrez_IDS <- mapIds(org.Hs.eg.db, V1, 'ENTREZID', 'SYMBOL')
+fisher_results$GENE1_entrez_ID = entrez_IDS
+
+V2 <- as.vector(as.character(fisher_results$g2)) #%>% unique()
+entrez_IDS <- mapIds(org.Hs.eg.db, V2, 'ENTREZID', 'SYMBOL')
+fisher_results$GENE2_entrez_ID = entrez_IDS
+fisher_results$Hunet = 0
+hunetgenes <- c(HumanNet.FN$GENE1, HumanNet.FN$GENE2) %>% unique()
+
+rm(V1, V2, entrez_IDS)
+
+###Identifying genes within human net
+
+fisher_results <-
+  fisher_results %>% filter(GENE1_entrez_ID %in% hunetgenes) %>% filter(GENE2_entrez_ID %in% hunetgenes)
+fisher_results_HuNet <-
+  fisher_results_HuNet %>% filter(GENE1_entrez_ID %in% hunetgenes) %>% filter(GENE2_entrez_ID %in% hunetgenes)
+fisher_results_fil <- fisher_results %>% filter(g1 == "")
+
+genes <-
+  unique(c(
+    as.character(fisher_results$g1),
+    as.character(fisher_results$g2)
+  ))
+gene_entrez <-
+  unique(c(
+    as.character(fisher_results$GENE1_entrez_ID),
+    as.character(fisher_results$GENE2_entrez_ID)
+  ))
+HumanNet.FN <-
+  HumanNet.FN %>% filter(GENE1 %in% gene_entrez) %>% filter(GENE2 %in% gene_entrez)
+
+###Checking every possible edge to see if its found within human net. 
+for (i in 1:length(genes)) {
+  gene1 = genes[i]
+  #print(gene1)
+  if (i != length(genes)) {
+    for (k in (i + 1):length(genes)) {
+      gene2 = genes[k]
+      fisher_results_temp <-
+        fisher_results %>% filter(g1 == gene1, g2 == gene2)
+      fisher_results_fil = rbind(fisher_results_fil, fisher_results_temp)
+    }
+  }
+}
+
+head(fisher_results_fil)
+
+###
+sum_edges <- c()
+#for (n in 1:10000){
+###randomly selecting n edges (fishes network) to see enrichment possibility, ran once for demonstration 
+for (n in 1:1) {
+  print(n)
+  temp <-
+    sample_n(fisher_results_fil, size = nrow(fisher_results_HuNet))
+  for (i in 1:nrow(fisher_results_HuNet)) {
+    #print(i)
+    GENE1_entrez = temp[i, 5]
+    GENE2_entrez = temp[i, 6]
+    temp_hunet <-
+      HumanNet.FN %>% filter(GENE1 == GENE1_entrez) %>% filter(GENE2 == GENE2_entrez)
+    if (nrow(temp_hunet) != 0) {
+      temp[i, 7] = 1
+    }
+    temp_hunet2 <-
+      HumanNet.FN %>% filter(GENE1 == GENE2_entrez) %>% filter(GENE2 == GENE1_entrez)
+    if (nrow(temp_hunet2) != 0) {
+      temp[i, 7] = 1
+    }
+  }
+  sum_edges <-
+    c(sum_edges, (sum(temp$Hunet) / nrow(fisher_results_HuNet)))
+}
+
+###Checking resulting network human net overlap
+for (i in 1:nrow(fisher_results_HuNet)) {
+  #print(i)
+  GENE1_entrez = fisher_results_HuNet[i, 7]
+  GENE2_entrez = fisher_results_HuNet[i, 8]
+  temp_hunet <-
+    HumanNet.FN %>% filter(GENE1 == GENE1_entrez) %>% filter(GENE2 == GENE2_entrez)
+  if (nrow(temp_hunet) != 0) {
+    fisher_results_HuNet[i, 9] = 1
+  }
+  temp_hunet2 <-
+    HumanNet.FN %>% filter(GENE1 == GENE2_entrez) %>% filter(GENE2 == GENE1_entrez)
+  if (nrow(temp_hunet2) != 0) {
+    fisher_results_HuNet[i, 9] = 1
+  }
+}
+
+###Checking Coessentiality network overlap
+fisher_results_HuNet$CE = 0
+for (i in 1:nrow(fisher_results_HuNet)) {
+  #print(i)
+  GENE1_entrez = fisher_results_HuNet[i, 7]
+  GENE2_entrez = fisher_results_HuNet[i, 8]
+  temp_hunet <-
+    HS.CE %>% filter(V1 == GENE1_entrez) %>% filter(V2 == GENE2_entrez)
+  if (nrow(temp_hunet) != 0) {
+    fisher_results_HuNet[i, 10] = 1
+  }
+  temp_hunet2 <-
+    HS.CE %>% filter(V1 == GENE2_entrez) %>% filter(V2 == GENE1_entrez)
+  if (nrow(temp_hunet2) != 0) {
+    fisher_results_HuNet[i, 10] = 1
+  }
+}
+
+real_sum_edges <-
+  sum(fisher_results_HuNet$Hunet) / nrow(fisher_results_HuNet)
+
+sd_sum_edges <- sd(sum_edges)
+mean_sum_edges <- mean(sum_edges)
+
+sd_sum_edges <- sd(sum_edges)
+
+###used for the lines in supplemental figure 3
+real_sum_edges <-
+  sum(fisher_results_HuNet$Hunet) / nrow(fisher_results_HuNet)
+
+real_CE_edges <-
+  sum(fisher_results_HuNet$CE) / nrow(fisher_results_HuNet)
+
+hunet_data <- data.frame(sum_edges)
+#save(sum_edges, real_sum_edges,real_CE_edges , file = "./Data/Hunet_comparison.Rdata")
+#unlink("./Data/Hunet_comparison.Rdata")
+
+######only ran once for demonstration, loading in original data. 
+
+rm(list = ls())
+if (is.integer(dev.list())) {
+  dev.off()
+}
+cat("\014")
+set.seed(1)
+source("functions.R")
+
+load("Data/Hunet_comparison.Rdata", .GlobalEnv)
+
+hunet_data <- data.frame(sum_edges)
+```
+
+```{r human_net_plot}
+hunet_data %>% ggplot(aes(sum_edges)) + geom_histogram(bins = 30) + theme_Publication() +
+  geom_vline(xintercept = real_CE_edges) + geom_vline(xintercept = real_sum_edges) + ylab("Edge Count") +
+  xlab("Percentage of Edge Coverage in HumaNet")
+```
+
+```{r human_net_cutoff}
+
+result_df <- read.delim("Data/Human_net_cutoff_results.txt")
+
+result_df %>% ggplot(aes(x = interval_Z,y = percent_edges,size = gene_network)) + geom_point() + theme_Publication() + xlab("Interval Shuffled Z-Score") + ylab("Percent Edges Found in Human Net") + geom_vline(xintercept = 5.235, color = "red")
+```
+
+##Figure 2D - Network Ornaments 
+First ornament is commented, however other ornaments follow same code chunks, with exception of FASN. FASN contains fisher's test check with respect to AML. 
+```{r jak_stat}
+rm(list = ls())
+if (is.integer(dev.list())){dev.off()}
+cat("\014")
+
+set.seed(1)
+source("functions.R")
+
+avana_res <- read.delim("Data/avana_output_v2.txt")
+cell_line_key <- read_csv("Data/DepMap-2018q4-celllines.csv")
+
+Mod_Z_pr_values <- read.delim("Data/Mod_Z_pr_values.txt") ### Taken from figure 1 code.
+Mod_Z_pr_values <- Mod_Z_pr_values %>% dplyr::select(-Recall)
+Mod_Z_pr_values$Precision <- round(Mod_Z_pr_values$Precision,digits = 2)
+
+###Aggregating precision scores used to color in the box
+
+Mod_Z_pr_values <- aggregate(
+  Mod_Z_pr_values$Precision,
+  by = list(Mod_Z_pr_values$Score),
+  FUN = mean,
+  na.rm = TRUE
+)
+
+colnames(Mod_Z_pr_values) = c("Mod_Z_Score","FDR")
+###FDR from precision
+Mod_Z_pr_values$FDR = 1-Mod_Z_pr_values$FDR 
+
+###color used for heatmap ornaments
+tsg_green <- "#699186"
+
+############################ jak-stat2
+picked_genes <- c("JAK1","STAT2","IRF9","TYK2")
+
+###creating binary matrix of hits
+temp_hits <- avana_res %>% filter(GENE %in% picked_genes) %>% #filter(Cosmic_TSG == 1) %>%
+  droplevels() %>% dplyr::select(GENE,Cell_Line,hit) %>% unique() %>% spread(Cell_Line,hit)
+
+###removing 0 columns
+temp <- temp_hits[-1][colSums(temp_hits[-1]) > 0]
+temp_hits <- temp_hits %>% dplyr::select(GENE,colnames(temp))
+rownames(temp_hits) = temp_hits$GENE
+temp_hits$GENE = NULL
+
+JAK1_Cells <- avana_res %>% filter(GENE == "JAK1") %>% filter(hit == 1) %>% pull(Cell_Line) %>% droplevels() %>% as.vector()
+STAT2_Cells <- avana_res %>% filter(GENE == "STAT2") %>% filter(hit == 1) %>% pull(Cell_Line) %>% droplevels() %>% as.vector()
+TYK2_Cells <- avana_res %>% filter(GENE == "TYK2") %>% filter(hit == 1) %>% pull(Cell_Line) %>% droplevels() %>% as.vector()
+IRF9_Cells <- avana_res %>% filter(GENE == "IRF9") %>% filter(hit == 1) %>% pull(Cell_Line) %>% droplevels() %>% as.vector()
+
+###ordering the heatmap
+temp_hits <- temp_hits[unique(c(IRF9_Cells,STAT2_Cells,TYK2_Cells,JAK1_Cells))]
+order = c("IRF9","STAT2","TYK2","JAK1")
+col_order <- colSums(temp_hits) %>% sort(decreasing = TRUE)
+###Matching disease type for annotation bar
+cells <- cell_line_key %>% filter(DepMap_ID %in% names(col_order)) %>% droplevels() %>% pull(`Primary Disease`) %>% toupper()
+temp_hits <- temp_hits[match(order, rownames(temp_hits)),names(col_order)]
+
+col_order <- colSums(temp_hits) %>% sort(decreasing = TRUE)
+cells <- cell_line_key %>% filter(DepMap_ID %in% names(col_order)) %>% droplevels() %>% pull(`Primary Disease`) %>% toupper()
+cells <- color.bar(cells)
+
+temp_hits <- temp_hits[match(order, rownames(temp_hits)),names(col_order)]
+col = list(foo = cells)
+
+###selecting z-scores now for color range observed. This gives gradient in heatmap
+temp_z_score <- avana_res %>% filter(GENE %in% picked_genes) %>% filter(Cell_Line %in% colnames(temp_hits)) %>%
+  droplevels() %>% dplyr::select(GENE,Cell_Line,Mod_Z_Score) #%>% unique() %>% spread(Cell_Line,Mod_Z_Score)
+
+temp_z_score$Mod_Z_Score <- round(temp_z_score$Mod_Z_Score, digits = 2) 
+
+###Merging shuffled z-scores to FDR values
+a=data.table(Mod_Z_Data=c(temp_z_score$Mod_Z_Score))
+a[,merge:=Mod_Z_Data]
+
+b=data.table(Mod_Z_PR=c(Mod_Z_pr_values$Mod_Z_Score))
+b[,merge:=Mod_Z_PR]
+
+setkeyv(a,c('merge'))
+setkeyv(b,c('merge'))
+
+Merge_a_b=b[a,roll='nearest']
+
+colnames(Merge_a_b)[1] <- "Mod_Z_Score_match"
+colnames(Merge_a_b)[2] <- "Mod_Z_Score"
+
+temp_z_score <- merge(temp_z_score,Merge_a_b) %>% dplyr::select(GENE,Cell_Line,Mod_Z_Score_match)
+colnames(temp_z_score)[3] <- "Mod_Z_Score"
+
+temp_z_score <- merge(temp_z_score,Mod_Z_pr_values,all.x = TRUE)
+
+temp_z_score <- temp_z_score %>% unique() %>% dplyr::select(-Mod_Z_Score) %>% spread(Cell_Line,FDR)
+
+rownames(temp_z_score) = temp_z_score$GENE
+temp_z_score$GENE = NULL
+
+temp_z_score <- temp_z_score[rownames(temp_hits),]
+temp_z_score <- temp_z_score[,colnames(temp_hits)]
+
+###color ramp, demonstrates values that are close to cutoff
+cols = colorRamp2(c(0.0, 0.10,0.20,0.30,0.40,0.50), c(tsg_green,tsg_green,"white","white","white","white"))
+#cols = colorRamp2(c( 0.25, 0.5,0.75, 1), c("white","white","white","#4A3EBA"))
+#cols <- colorRampPalette(c("white","#3a393b"))(n = 1000)
+ha1 <- HeatmapAnnotation(foo = cbind(Type = names(cells)),annotation_name_side = "right",
+                         col = col, show_legend = c("foo" = TRUE),show_annotation_name = c(foo = TRUE), # only turn off `bar`
+                         height = unit(1, "cm"),name = "foo_ann")
+
+#pdf("./paper_figs_code/fig/3-jack_stat_Heatmap_common_scale.pdf",width = 10,height = 10)
+# Heatmap(
+#   as.matrix(temp_z_score),col = cols, cluster_rows = FALSE,cluster_columns = FALSE,top_annotation = ha1,
+#   name = "foo",show_heatmap_legend = TRUE  #Colv=NA,scale = "none", col = cols,Rowv = NA
+# )
+#decorate_heatmap_body("foo", {grid.rect(gp = gpar(fill = "transparent", col = "black", lwd = 1))})
+#dev.off()
+```
+```{r jak_stat_plot}
+Heatmap(
+  as.matrix(temp_z_score),col = cols, cluster_rows = FALSE,cluster_columns = FALSE,top_annotation = ha1,
+  name = "foo",show_heatmap_legend = TRUE  #Colv=NA,scale = "none", col = cols,Rowv = NA
+)
+```
+
+```{r aryl_ahr}
+picked_genes <- c("AHR","ARNT")
+
+temp_hits <- avana_res %>% filter(GENE %in% picked_genes) %>% #filter(Cosmic_TSG == 1) %>%
+  droplevels() %>% dplyr::select(GENE,Cell_Line,hit) %>% unique() %>% spread(Cell_Line,hit)
+temp <- temp_hits[-1][colSums(temp_hits[-1]) > 0]
+temp_hits <- temp_hits %>% dplyr::select(GENE,colnames(temp))
+rownames(temp_hits) = temp_hits$GENE
+temp_hits$GENE = NULL
+
+AHR_Cells <- avana_res %>% filter(GENE == "AHR") %>% filter(hit == 1) %>% pull(Cell_Line) %>% droplevels() %>% as.vector()
+ARNT_Cells <- avana_res %>% filter(GENE == "ARNT") %>% filter(hit == 1) %>% pull(Cell_Line) %>% droplevels() %>% as.vector()
+
+Other_Cells <- avana_res %>% filter(Cell_Line %in% colnames(temp)) %>%
+  filter(Cell_Line %!in% c(AHR_Cells,ARNT_Cells)) %>%
+  pull(Cell_Line) %>%droplevels() %>% as.vector() %>% unique()
+
+temp_hits <- temp_hits[unique(c(ARNT_Cells,AHR_Cells))]
+order = c("ARNT","AHR")
+
+col_order <- colSums(temp_hits) %>% sort(decreasing = TRUE)
+cells <- cell_line_key %>% filter(DepMap_ID %in% names(col_order)) %>% droplevels() %>% pull(`Primary Disease`) %>% toupper()
+cells <- color.bar(cells)
+
+temp_hits <- temp_hits[match(order, rownames(temp_hits)),names(col_order)]
+col = list(foo = cells)
+
+temp_z_score <- avana_res %>% filter(GENE %in% picked_genes) %>% filter(Cell_Line %in% colnames(temp_hits)) %>%
+  droplevels() %>% dplyr::select(GENE,Cell_Line,Mod_Z_Score) #%>% unique() %>% spread(Cell_Line,Mod_Z_Score)
+
+temp_z_score$Mod_Z_Score <- round(temp_z_score$Mod_Z_Score, digits = 2) 
+
+a=data.table(Mod_Z_Data=c(temp_z_score$Mod_Z_Score))
+a[,merge:=Mod_Z_Data]
+
+b=data.table(Mod_Z_PR=c(Mod_Z_pr_values$Mod_Z_Score))
+b[,merge:=Mod_Z_PR]
+
+setkeyv(a,c('merge'))
+setkeyv(b,c('merge'))
+
+Merge_a_b=b[a,roll='nearest']
+
+colnames(Merge_a_b)[1] <- "Mod_Z_Score_match"
+colnames(Merge_a_b)[2] <- "Mod_Z_Score"
+
+temp_z_score <- merge(temp_z_score,Merge_a_b) %>% dplyr::select(GENE,Cell_Line,Mod_Z_Score_match)
+colnames(temp_z_score)[3] <- "Mod_Z_Score"
+
+temp_z_score <- merge(temp_z_score,Mod_Z_pr_values,all.x = TRUE)
+
+temp_z_score <- temp_z_score %>% unique() %>% dplyr::select(-Mod_Z_Score) %>% spread(Cell_Line,FDR)
+
+rownames(temp_z_score) = temp_z_score$GENE
+temp_z_score$GENE = NULL
+
+temp_z_score <- temp_z_score[rownames(temp_hits),]
+temp_z_score <- temp_z_score[,colnames(temp_hits)]
+
+cols = colorRamp2(c(0.0, 0.10,0.20,0.30,0.40,0.50), c(tsg_green,tsg_green,"white","white","white","white"))
+#cols <- colorRampPalette(c("white","#3a393b"))(n = 1000)
+#cols = colorRamp2(c( 0.25, 0.5,0.75, 1), c("white","white","white","#F6CF1E"))
+
+ha1 <- HeatmapAnnotation(foo = cbind(Type = names(cells)),annotation_name_side = "right",
+                         col = col, show_legend = c("foo" = TRUE),show_annotation_name = c(foo = TRUE), # only turn off `bar`
+                         height = unit(1, "cm"),name = "foo_ann")
+
+
+#pdf("./paper_figs_code/fig/3-ARNT_AHR_Heatmap_common_scale.pdf",width = 10,height = 10)
+Heatmap(
+  as.matrix(temp_z_score),col = cols, cluster_rows = FALSE,cluster_columns = FALSE,top_annotation = ha1,
+  name = "foo",show_heatmap_legend = TRUE  #Colv=NA,scale = "none", col = cols,Rowv = NA
+)
+#decorate_heatmap_body("foo", {grid.rect(gp = gpar(fill = "transparent", col = "black", lwd = 1))})
+#dev.off()
+```
+
+```{r gator1}
+picked_genes <- c("NPRL2","DEPDC5")
+
+temp_hits <- avana_res %>% filter(GENE %in% picked_genes) %>% #filter(Cosmic_TSG == 1) %>%
+  droplevels() %>% dplyr::select(GENE,Cell_Line,hit) %>% unique() %>% spread(Cell_Line,hit)
+temp <- temp_hits[-1][colSums(temp_hits[-1]) > 0]
+temp_hits <- temp_hits %>% dplyr::select(GENE,colnames(temp))
+rownames(temp_hits) = temp_hits$GENE
+temp_hits$GENE = NULL
+
+NPRL2_Cells <- avana_res %>% filter(GENE == "NPRL2") %>% filter(hit == 1) %>% pull(Cell_Line) %>% droplevels() %>% as.vector()
+DEPDC5_Cells <- avana_res %>% filter(GENE == "DEPDC5") %>% filter(hit == 1) %>% pull(Cell_Line) %>% droplevels() %>% as.vector()
+
+Other_Cells <- avana_res %>% filter(Cell_Line %in% colnames(temp)) %>%
+  filter(Cell_Line %!in% c(NPRL2_Cells,DEPDC5_Cells)) %>%
+  pull(Cell_Line) %>%droplevels() %>% as.vector() %>% unique()
+
+temp_hits <- temp_hits[unique(c(DEPDC5_Cells,NPRL2_Cells))]
+order = c("DEPDC5","NPRL2")
+
+col_order <- colSums(temp_hits) %>% sort(decreasing = TRUE)
+cells <- cell_line_key %>% filter(DepMap_ID %in% names(col_order)) %>% droplevels() %>% pull(`Primary Disease`) %>% toupper()
+cells <- color.bar(cells)
+
+temp_hits <- temp_hits[match(order, rownames(temp_hits)),names(col_order)]
+col = list(foo = cells)
+
+temp_z_score <- avana_res %>% filter(GENE %in% picked_genes) %>% filter(Cell_Line %in% colnames(temp_hits)) %>%
+  droplevels() %>% dplyr::select(GENE,Cell_Line,Mod_Z_Score) #%>% unique() %>% spread(Cell_Line,Mod_Z_Score)
+
+temp_z_score$Mod_Z_Score <- round(temp_z_score$Mod_Z_Score, digits = 2) 
+
+a=data.table(Mod_Z_Data=c(temp_z_score$Mod_Z_Score))
+a[,merge:=Mod_Z_Data]
+
+b=data.table(Mod_Z_PR=c(Mod_Z_pr_values$Mod_Z_Score))
+b[,merge:=Mod_Z_PR]
+
+setkeyv(a,c('merge'))
+setkeyv(b,c('merge'))
+
+Merge_a_b=b[a,roll='nearest']
+
+colnames(Merge_a_b)[1] <- "Mod_Z_Score_match"
+colnames(Merge_a_b)[2] <- "Mod_Z_Score"
+
+temp_z_score <- merge(temp_z_score,Merge_a_b) %>% dplyr::select(GENE,Cell_Line,Mod_Z_Score_match)
+colnames(temp_z_score)[3] <- "Mod_Z_Score"
+
+temp_z_score <- merge(temp_z_score,Mod_Z_pr_values,all.x = TRUE)
+
+temp_z_score <- temp_z_score %>% unique() %>% dplyr::select(-Mod_Z_Score) %>% spread(Cell_Line,FDR)
+
+rownames(temp_z_score) = temp_z_score$GENE
+temp_z_score$GENE = NULL
+
+temp_z_score <- temp_z_score[rownames(temp_hits),]
+temp_z_score <- temp_z_score[,colnames(temp_hits)]
+
+cols = colorRamp2(c(0.0, 0.10,0.20,0.30,0.40,0.50), c(tsg_green,tsg_green,"white","white","white","white"))
+#cols <- colorRampPalette(c("white","#3a393b"))(n = 1000)
+#cols = colorRamp2(c( 0.25, 0.5,0.75, 1), c("white","white","white","#42616C"))
+
+ha1 <- HeatmapAnnotation(foo = cbind(Type = names(cells)),annotation_name_side = "right",
+                         col = col, show_legend = c("foo" = TRUE),show_annotation_name = c(foo = TRUE), # only turn off `bar`
+                         height = unit(1, "cm"),name = "foo_ann")
+
+
+#pdf("./paper_figs_code/fig/3-GATOR1_Heatmap_common_scale.pdf",width = 10,height = 10)
+Heatmap(
+  as.matrix(temp_z_score),col = cols, cluster_rows = FALSE,cluster_columns = FALSE,top_annotation = ha1,
+  name = "foo",show_heatmap_legend = TRUE  #Colv=NA,scale = "none", col = cols,Rowv = NA
+)
+#decorate_heatmap_body("foo", {grid.rect(gp = gpar(fill = "transparent", col = "black", lwd = 1))})
+#dev.off()
+```
+
+```{r ubiq}
+picked_genes <- c("UBE2F","CUL5")
+
+temp_hits <- avana_res %>% filter(GENE %in% picked_genes) %>% #filter(Cosmic_TSG == 1) %>%
+  droplevels() %>% dplyr::select(GENE,Cell_Line,hit) %>% unique() %>% spread(Cell_Line,hit)
+temp <- temp_hits[-1][colSums(temp_hits[-1]) > 0]
+temp_hits <- temp_hits %>% dplyr::select(GENE,colnames(temp))
+rownames(temp_hits) = temp_hits$GENE
+temp_hits$GENE = NULL
+
+CUL5_Cells <- avana_res %>% filter(GENE == "CUL5") %>% filter(hit == 1) %>% pull(Cell_Line) %>% droplevels() %>% as.vector()
+UBE2F_Cells <- avana_res %>% filter(GENE == "UBE2F") %>% filter(hit == 1) %>% pull(Cell_Line) %>% droplevels() %>% as.vector()
+
+Other_Cells <- avana_res %>% filter(Cell_Line %in% colnames(temp)) %>%
+  filter(Cell_Line %!in% c(CUL5_Cells,UBE2F_Cells)) %>%
+  pull(Cell_Line) %>%droplevels() %>% as.vector() %>% unique()
+
+temp_hits <- temp_hits[unique(c(CUL5_Cells,UBE2F_Cells))]
+order = c("CUL5","UBE2F")
+
+col_order <- colSums(temp_hits) %>% sort(decreasing = TRUE)
+cells <- cell_line_key %>% filter(DepMap_ID %in% names(col_order)) %>% droplevels() %>% pull(`Primary Disease`) %>% toupper()
+cells <- color.bar(cells)
+
+temp_hits <- temp_hits[match(order, rownames(temp_hits)),names(col_order)]
+col = list(foo = cells)
+
+temp_z_score <- avana_res %>% filter(GENE %in% picked_genes) %>% filter(Cell_Line %in% colnames(temp_hits)) %>%
+  droplevels() %>% dplyr::select(GENE,Cell_Line,Mod_Z_Score) #%>% unique() %>% spread(Cell_Line,Mod_Z_Score)
+
+temp_z_score$Mod_Z_Score <- round(temp_z_score$Mod_Z_Score, digits = 2) 
+
+a=data.table(Mod_Z_Data=c(temp_z_score$Mod_Z_Score))
+a[,merge:=Mod_Z_Data]
+
+b=data.table(Mod_Z_PR=c(Mod_Z_pr_values$Mod_Z_Score))
+b[,merge:=Mod_Z_PR]
+
+setkeyv(a,c('merge'))
+setkeyv(b,c('merge'))
+
+Merge_a_b=b[a,roll='nearest']
+
+colnames(Merge_a_b)[1] <- "Mod_Z_Score_match"
+colnames(Merge_a_b)[2] <- "Mod_Z_Score"
+
+temp_z_score <- merge(temp_z_score,Merge_a_b) %>% dplyr::select(GENE,Cell_Line,Mod_Z_Score_match)
+colnames(temp_z_score)[3] <- "Mod_Z_Score"
+
+temp_z_score <- merge(temp_z_score,Mod_Z_pr_values,all.x = TRUE)
+
+temp_z_score <- temp_z_score %>% unique() %>% dplyr::select(-Mod_Z_Score) %>% spread(Cell_Line,FDR)
+
+rownames(temp_z_score) = temp_z_score$GENE
+temp_z_score$GENE = NULL
+
+temp_z_score <- temp_z_score[rownames(temp_hits),]
+temp_z_score <- temp_z_score[,colnames(temp_hits)]
+
+cols = colorRamp2(c(0.0, 0.10,0.20,0.30,0.40,0.50), c(tsg_green,tsg_green,"white","white","white","white"))
+#cols <- colorRampPalette(c("white","#3a393b"))(n = 1000)
+#cols = colorRamp2(c( 0.25, 0.5,0.75, 1), c("white","white","white","#015050"))
+
+ha1 <- HeatmapAnnotation(foo = cbind(Type = names(cells)),annotation_name_side = "right",
+                         col = col, show_legend = c("foo" = TRUE),show_annotation_name = c(foo = TRUE), # only turn off `bar`
+                         height = unit(1, "cm"),name = "foo_ann")
+
+
+#pdf("./paper_figs_code/fig/3-Ubiq_ligase_Heatmap_common_scale.pdf",width = 10,height = 10)
+
+Heatmap(
+  as.matrix(temp_z_score),col = cols, cluster_rows = FALSE,cluster_columns = FALSE,top_annotation = ha1,
+  name = "foo",show_heatmap_legend = TRUE, #Colv=NA,scale = "none", col = cols,Rowv = NA
+)
+#decorate_heatmap_body("foo", {grid.rect(gp = gpar(fill = "transparent", col = "black", lwd = 1))})
+#dev.off()
+```
+
+```{r notch}
+picked_genes <- c("NCSTN","PSENEN","TGFBR2")
+
+temp_hits <- avana_res %>% filter(GENE %in% picked_genes) %>% #filter(Cosmic_TSG == 1) %>%
+  droplevels() %>% dplyr::select(GENE,Cell_Line,hit) %>% unique() %>% spread(Cell_Line,hit)
+temp <- temp_hits[-1][colSums(temp_hits[-1]) > 0]
+temp_hits <- temp_hits %>% dplyr::select(GENE,colnames(temp))
+rownames(temp_hits) = temp_hits$GENE
+temp_hits$GENE = NULL
+
+TGFBR2_Cells <- avana_res %>% filter(GENE == "TGFBR2") %>% filter(hit == 1) %>% pull(Cell_Line) %>% droplevels() %>% as.vector()
+PSENEN_Cells <- avana_res %>% filter(GENE == "PSENEN") %>% filter(hit == 1) %>% pull(Cell_Line) %>% droplevels() %>% as.vector()
+NCSTN_Cells <- avana_res %>% filter(GENE == "NCSTN") %>% filter(hit == 1) %>% pull(Cell_Line) %>% droplevels() %>% as.vector()
+
+Other_Cells <- avana_res %>% filter(Cell_Line %in% colnames(temp)) %>%
+  filter(Cell_Line %!in% c(PSENEN_Cells,NCSTN_Cells,TGFBR2_Cells)) %>%
+  pull(Cell_Line) %>%droplevels() %>% as.vector() %>% unique()
+
+temp_hits <- temp_hits[unique(c(PSENEN_Cells,NCSTN_Cells,TGFBR2_Cells))]
+order = c("PSENEN","NCSTN","TGFBR2")
+
+col_order <- colSums(temp_hits) %>% sort(decreasing = TRUE)
+cells <- cell_line_key %>% filter(DepMap_ID %in% names(col_order)) %>% droplevels() %>% pull(`Primary Disease`) %>% toupper()
+cells <- color.bar(cells)
+
+temp_hits <- temp_hits[match(order, rownames(temp_hits)),names(col_order)]
+col = list(foo = cells)
+
+temp_z_score <- avana_res %>% filter(GENE %in% picked_genes) %>% filter(Cell_Line %in% colnames(temp_hits)) %>%
+  droplevels() %>% dplyr::select(GENE,Cell_Line,Mod_Z_Score) #%>% unique() %>% spread(Cell_Line,Mod_Z_Score)
+
+temp_z_score$Mod_Z_Score <- round(temp_z_score$Mod_Z_Score, digits = 2) 
+
+a=data.table(Mod_Z_Data=c(temp_z_score$Mod_Z_Score))
+a[,merge:=Mod_Z_Data]
+
+b=data.table(Mod_Z_PR=c(Mod_Z_pr_values$Mod_Z_Score))
+b[,merge:=Mod_Z_PR]
+
+setkeyv(a,c('merge'))
+setkeyv(b,c('merge'))
+
+Merge_a_b=b[a,roll='nearest']
+
+colnames(Merge_a_b)[1] <- "Mod_Z_Score_match"
+colnames(Merge_a_b)[2] <- "Mod_Z_Score"
+
+temp_z_score <- merge(temp_z_score,Merge_a_b) %>% dplyr::select(GENE,Cell_Line,Mod_Z_Score_match)
+colnames(temp_z_score)[3] <- "Mod_Z_Score"
+
+temp_z_score <- merge(temp_z_score,Mod_Z_pr_values,all.x = TRUE)
+
+temp_z_score <- temp_z_score %>% unique() %>% dplyr::select(-Mod_Z_Score) %>% spread(Cell_Line,FDR)
+
+rownames(temp_z_score) = temp_z_score$GENE
+temp_z_score$GENE = NULL
+
+temp_z_score <- temp_z_score[rownames(temp_hits),]
+temp_z_score <- temp_z_score[,colnames(temp_hits)]
+
+cols = colorRamp2(c(0.0, 0.10,0.20,0.30,0.40,0.50), c(tsg_green,tsg_green,"white","white","white","white"))
+#cols <- colorRampPalette(c("white","#3a393b"))(n = 1000)
+#cols = colorRamp2(c( 0.25, 0.5,0.75, 1), c("white","white","white","#F485D8"))
+
+ha1 <- HeatmapAnnotation(foo = cbind(Type = names(cells)),annotation_name_side = "right",
+                         col = col, show_legend = c("foo" = TRUE),show_annotation_name = c(foo = TRUE), # only turn off `bar`
+                         height = unit(1, "cm"),name = "foo_ann")
+
+#pdf("./paper_figs_code/fig/3-notch_Heatmap_common_scale.pdf",width = 10,height = 10)
+
+Heatmap(
+  as.matrix(temp_z_score),col = cols, cluster_rows = FALSE,cluster_columns = FALSE,top_annotation = ha1,
+  name = "foo",show_heatmap_legend = TRUE, #Colv=NA,scale = "none", col = cols,Rowv = NA
+)
+#decorate_heatmap_body("foo", {grid.rect(gp = gpar(fill = "transparent", col = "black", lwd = 1))})
+#dev.off()
+```
+
+```{r staga}
+picked_genes <- c("MED19","TAF6L","TAF5L","TADA1","TADA2B","SUPT20H")
+
+temp_hits <- avana_res %>% filter(GENE %in% picked_genes) %>% #filter(Cosmic_TSG == 1) %>%
+  droplevels() %>% dplyr::select(GENE,Cell_Line,hit) %>% unique() %>% spread(Cell_Line,hit)
+temp <- temp_hits[-1][colSums(temp_hits[-1]) > 0]
+temp_hits <- temp_hits %>% dplyr::select(GENE,colnames(temp))
+rownames(temp_hits) = temp_hits$GENE
+temp_hits$GENE = NULL
+
+MED19_Cells <- avana_res %>% filter(GENE == "MED19") %>% filter(hit == 1) %>% pull(Cell_Line) %>% droplevels() %>% as.vector()
+TAF6L_Cells <- avana_res %>% filter(GENE == "TAF6L") %>% filter(hit == 1) %>% pull(Cell_Line) %>% droplevels() %>% as.vector()
+TAF5L_Cells <- avana_res %>% filter(GENE == "TAF5L") %>% filter(hit == 1) %>% pull(Cell_Line) %>% droplevels() %>% as.vector()
+TADA1_Cells <- avana_res %>% filter(GENE == "TADA1") %>% filter(hit == 1) %>% pull(Cell_Line) %>% droplevels() %>% as.vector()
+TADA2B_Cells <- avana_res %>% filter(GENE == "TADA2B") %>% filter(hit == 1) %>% pull(Cell_Line) %>% droplevels() %>% as.vector()
+SUPT20H_Cells <- avana_res %>% filter(GENE == "SUPT20H") %>% filter(hit == 1) %>% pull(Cell_Line) %>% droplevels() %>% as.vector()
+
+Other_Cells <- avana_res %>% filter(Cell_Line %in% colnames(temp)) %>%
+  filter(Cell_Line %!in% c(TAF5L_Cells,TADA1_Cells,TADA2B_Cells,SUPT20H_Cells,MED19_Cells,TAF6L_Cells)) %>%
+  pull(Cell_Line) %>%droplevels() %>% as.vector() %>% unique()
+
+temp_hits <- temp_hits[unique(c(TAF5L_Cells,TADA1_Cells,TADA2B_Cells,SUPT20H_Cells,MED19_Cells,TAF6L_Cells))]
+order = c("TAF5L","TADA1","TADA2B","SUPT20H","MED19","TAF6L")
+col_order <- colSums(temp_hits) %>% sort(decreasing = TRUE)
+cells <- cell_line_key %>% filter(DepMap_ID %in% names(col_order)) %>% droplevels() %>% pull(`Primary Disease`) %>% toupper()
+cells <- color.bar(cells)
+
+temp_hits <- temp_hits[match(order, rownames(temp_hits)),names(col_order)]
+col = list(foo = cells)
+
+temp_z_score <- avana_res %>% filter(GENE %in% picked_genes) %>% filter(Cell_Line %in% colnames(temp_hits)) %>%
+  droplevels() %>% dplyr::select(GENE,Cell_Line,Mod_Z_Score) #%>% unique() %>% spread(Cell_Line,Mod_Z_Score)
+
+temp_z_score$Mod_Z_Score <- round(temp_z_score$Mod_Z_Score, digits = 2) 
+
+a=data.table(Mod_Z_Data=c(temp_z_score$Mod_Z_Score))
+a[,merge:=Mod_Z_Data]
+
+b=data.table(Mod_Z_PR=c(Mod_Z_pr_values$Mod_Z_Score))
+b[,merge:=Mod_Z_PR]
+
+setkeyv(a,c('merge'))
+setkeyv(b,c('merge'))
+
+Merge_a_b=b[a,roll='nearest']
+
+colnames(Merge_a_b)[1] <- "Mod_Z_Score_match"
+colnames(Merge_a_b)[2] <- "Mod_Z_Score"
+
+temp_z_score <- merge(temp_z_score,Merge_a_b) %>% dplyr::select(GENE,Cell_Line,Mod_Z_Score_match)
+colnames(temp_z_score)[3] <- "Mod_Z_Score"
+
+temp_z_score <- merge(temp_z_score,Mod_Z_pr_values,all.x = TRUE)
+
+temp_z_score <- temp_z_score %>% unique() %>% dplyr::select(-Mod_Z_Score) %>% spread(Cell_Line,FDR)
+
+rownames(temp_z_score) = temp_z_score$GENE
+temp_z_score$GENE = NULL
+
+temp_z_score <- temp_z_score[rownames(temp_hits),]
+temp_z_score <- temp_z_score[,colnames(temp_hits)]
+
+cols = colorRamp2(c(0.0, 0.10,0.20,0.30,0.40,0.50), c(tsg_green,tsg_green,"white","white","white","white"))
+#cols <- colorRampPalette(c("white","#3a393b"))(n = 1000)
+#cols = colorRamp2(c( 0.25, 0.5,0.75, 1), c("white","white","white","#DA0AEE"))
+
+ha1 <- HeatmapAnnotation(foo = cbind(Type = names(cells)),annotation_name_side = "right",
+                         col = col, show_legend = c("foo" = TRUE),show_annotation_name = c(foo = TRUE), # only turn off `bar`
+                         height = unit(1, "cm"),name = "foo_ann")
+
+#cols = c("#ffffff","#DA0AEE")
+
+#pdf("./paper_figs_code/fig/3-staga_Heatmap_common_scale.pdf",width = 10,height = 10)
+Heatmap(
+  as.matrix(temp_z_score),col = cols, cluster_rows = FALSE,cluster_columns = FALSE,top_annotation = ha1,
+  name = "foo",show_heatmap_legend = TRUE  #Colv=NA,scale = "none", col = cols,Rowv = NA
+)
+#decorate_heatmap_body("foo", {grid.rect(gp = gpar(fill = "transparent", col = "black", lwd = 1))})
+#dev.off()
+```
+
+```{r fasn}
+picked_genes <- c("FASN","GPAT4","CHP1","GPI","ACACA","SLC2A1","ERO1A","LSS","PGP")
+temp_hits <- avana_res %>% filter(GENE %in% picked_genes) %>% #filter(Cosmic_TSG == 1) %>%
+  droplevels() %>% dplyr::select(GENE,Cell_Line,hit) %>% unique() %>% spread(Cell_Line,hit)
+temp <- temp_hits[-1][colSums(temp_hits[-1]) > 0]
+
+
+###Code checking fisher's exact test of AML hit probabilities. 
+AML <- cell_line_key %>% filter(`Subtype Disease` == "Acute Myelogenous Leukemia (AML)")
+AML_tot <- avana_res %>% filter(Cell_Line %in% AML$DepMap_ID) %>% dplyr::select(Cell_Line) %>% droplevels() %>% unique() %>% nrow() #15
+Other_tot <- avana_res %>% filter(Cell_Line %!in% AML$DepMap_ID) %>% dplyr::select(Cell_Line) %>% droplevels() %>% unique() %>% nrow() #548
+AML_hit <- length(colnames(temp)[colnames(temp) %in% AML$DepMap_ID])
+Other_hit <- length(colnames(temp)[colnames(temp) %!in% AML$DepMap_ID])
+AML_table <-
+matrix(c(AML_hit,AML_tot-AML_hit, Other_hit, Other_tot-Other_hit),
+       nrow = 2,
+       dimnames = list(PS_Hit = c("Hit", "No_Hit"),
+                       AML = c("AML", "Other")))
+fisher.test(AML_table)
+
+
+temp_hits <- temp_hits %>% dplyr::select(GENE,colnames(temp))
+rownames(temp_hits) = temp_hits$GENE
+temp_hits$GENE = NULL
+
+FASN_Cells <- avana_res %>% filter(GENE == "FASN") %>% filter(hit == 1) %>% pull(Cell_Line) %>% droplevels() %>% as.vector()
+GPI_Cells <- avana_res %>% filter(GENE == "GPI") %>% filter(hit == 1) %>% pull(Cell_Line) %>% droplevels() %>% as.vector()
+CHP1_Cells <- avana_res %>% filter(GENE == "CHP1") %>% filter(hit == 1) %>% pull(Cell_Line) %>% droplevels() %>% as.vector()
+ACACA_Cells <- avana_res %>% filter(GENE == "ACACA") %>% filter(hit == 1) %>% pull(Cell_Line) %>% droplevels() %>% as.vector()
+SLC2A1_Cells <- avana_res %>% filter(GENE == "SLC2A1") %>% filter(hit == 1) %>% pull(Cell_Line) %>% droplevels() %>% as.vector()
+LSS_Cells <- avana_res %>% filter(GENE == "LSS") %>% filter(hit == 1) %>% pull(Cell_Line) %>% droplevels() %>% as.vector()
+ERO1A_Cells <- avana_res %>% filter(GENE == "ERO1A") %>% filter(hit == 1) %>% pull(Cell_Line) %>% droplevels() %>% as.vector()
+PGP_Cells <- avana_res %>% filter(GENE == "PGP") %>% filter(hit == 1) %>% pull(Cell_Line) %>% droplevels() %>% as.vector()
+GPAT4_Cells <- avana_res %>% filter(GENE == "GPAT4") %>% filter(hit == 1) %>% pull(Cell_Line) %>% droplevels() %>% as.vector()
+
+temp_hits <- temp_hits[unique(c(FASN_Cells,GPAT4_Cells,CHP1_Cells,GPI_Cells,ACACA_Cells,SLC2A1_Cells,ERO1A_Cells,LSS_Cells,PGP_Cells))]
+order = c("FASN","GPAT4","CHP1","ACACA","GPI","SLC2A1","ERO1A","LSS","PGP")
+col_order <- colSums(temp_hits) %>% sort(decreasing = TRUE)
+cells <- cell_line_key %>% filter(DepMap_ID %in% names(col_order)) %>% droplevels() %>% pull(`Primary Disease`) %>% toupper()
+cells <- color.bar(cells)
+
+temp_hits <- temp_hits[match(order, rownames(temp_hits)),names(col_order)]
+col = list(foo = cells)
+
+temp_z_score <- avana_res %>% filter(GENE %in% picked_genes) %>% filter(Cell_Line %in% colnames(temp_hits)) %>%
+  droplevels() %>% dplyr::select(GENE,Cell_Line,Mod_Z_Score) #%>% unique() %>% spread(Cell_Line,Mod_Z_Score)
+
+temp_z_score$Mod_Z_Score <- round(temp_z_score$Mod_Z_Score, digits = 2) 
+
+a=data.table(Mod_Z_Data=c(temp_z_score$Mod_Z_Score))
+a[,merge:=Mod_Z_Data]
+
+b=data.table(Mod_Z_PR=c(Mod_Z_pr_values$Mod_Z_Score))
+b[,merge:=Mod_Z_PR]
+
+setkeyv(a,c('merge'))
+setkeyv(b,c('merge'))
+
+Merge_a_b=b[a,roll='nearest']
+
+colnames(Merge_a_b)[1] <- "Mod_Z_Score_match"
+colnames(Merge_a_b)[2] <- "Mod_Z_Score"
+
+temp_z_score <- merge(temp_z_score,Merge_a_b) %>% dplyr::select(GENE,Cell_Line,Mod_Z_Score_match)
+colnames(temp_z_score)[3] <- "Mod_Z_Score"
+
+temp_z_score <- merge(temp_z_score,Mod_Z_pr_values,all.x = TRUE)
+
+temp_z_score <- temp_z_score %>% unique() %>% dplyr::select(-Mod_Z_Score) %>% spread(Cell_Line,FDR)
+
+rownames(temp_z_score) = temp_z_score$GENE
+temp_z_score$GENE = NULL
+
+temp_z_score <- temp_z_score[rownames(temp_hits),]
+temp_z_score <- temp_z_score[,colnames(temp_hits)]
+
+cols = colorRamp2(c(0.0, 0.10,0.20,0.30,0.40,0.50), c(tsg_green,tsg_green,"white","white","white","white"))
+#cols <- colorRampPalette(c("white","#3a393b"))(n = 1000)
+#cols = colorRamp2(c( 0.25, 0.5,0.75, 1), c("white","white","white","#FF4600"))
+
+ha1 <- HeatmapAnnotation(foo = cbind(Type = names(cells)),annotation_name_side = "right",
+                         col = col, show_legend = c("foo" = TRUE),show_annotation_name = c(foo = TRUE), # only turn off `bar`
+                         height = unit(1, "cm"),name = "foo_ann")
+
+
+#cols = c("#ffffff","#FF4600")
+
+#pdf("./paper_figs_code/fig/4-FASN_Heatmap_common_scale.pdf",width = 10,height = 10)
+Heatmap(
+  as.matrix(temp_z_score),col = cols, cluster_rows = FALSE,cluster_columns = FALSE,top_annotation = ha1,
+  name = "foo",show_heatmap_legend = TRUE  #Colv=NA,scale = "none", col = cols,Rowv = NA
+)
+#decorate_heatmap_body("foo", {grid.rect(gp = gpar(fill = "transparent", col = "black", lwd = 1))})
+#dev.off()
+```
+
+reseting workspace
+```{r reset}
+rm(list = ls())
+if (is.integer(dev.list())) {
+  dev.off()
+}
+cat("\014")
+```

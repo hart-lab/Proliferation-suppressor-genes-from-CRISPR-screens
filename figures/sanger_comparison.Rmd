@@ -1,0 +1,165 @@
+---
+title: "Sanger Comparison"
+output: 
+  html_document:
+    fig_width: 10
+    fig_height: 10
+---
+
+This code was used to generate the Sanger Comparison (Supplementary Figure 3)
+```{r sessioninfo}
+rm(list = ls())
+if (is.integer(dev.list())){dev.off()}
+cat("\014")
+set.seed(1)
+source("functions.R")
+sessionInfo()
+
+```
+
+```{r data_load}
+cell_line_key <- read_csv("Data/DepMap-2018q4-celllines.csv")
+avana_res <- read.delim("Data/avana_output_v2.txt")
+Sanger_Shuffle_Corrected_FC <- read.delim("Data/Sanger_Shuffle_Corrected_FC.txt")
+cell_passport <- read_csv("Data/model_list_20191104.csv") ##cell passport for sanger data
+cancer_gene_census <- read_csv("Data/cancer_gene_census.csv")
+NEGv1 <- read.delim("Data/NEGv1.txt")
+fisher_network <- read.delim("Data/fisher_results_res_fdr_0.01_2_7_20.txt")
+
+
+```
+
+```{r data_manipulation}
+oncogenes_all <- cancer_gene_census %>% filter(`Role in Cancer` %in%  c("oncogene, fusion","oncogene")) %>%
+  droplevels() %>% pull(`Entrez GeneId`) %>% unique()
+
+cosmic_tsg <- cancer_gene_census %>% 
+  filter(grepl("TSG",`Role in Cancer` ))
+
+V1 <- as.vector(as.character(Sanger_Shuffle_Corrected_FC$GENE))
+entrez_IDS <- mapIds(org.Hs.eg.db, V1, 'ENTREZID', 'SYMBOL')
+Sanger_Shuffle_Corrected_FC$entrez_ID = entrez_IDS
+
+##setting up Sanger data
+
+Sanger_Shuffle_Corrected_FC$Cosmic_TSG = 0
+Sanger_Shuffle_Corrected_FC$Cosmic_TSG[Sanger_Shuffle_Corrected_FC$entrez_ID %in% cosmic_tsg$`Entrez GeneId`] = 1
+
+cell_passport <- cell_passport %>% dplyr::select(BROAD_ID,model_id,CCLE_ID)
+colnames(cell_passport) = c("Cell_Line","Sanger_ID","CCLE")
+colnames(Sanger_Shuffle_Corrected_FC)[1] <- "Sanger_ID"
+
+cell_passport <- cell_passport %>% filter(Sanger_ID %in% Sanger_Shuffle_Corrected_FC$Sanger_ID) %>% filter(!is.na(Cell_Line))
+Sanger_Shuffle_Corrected_FC <- merge(Sanger_Shuffle_Corrected_FC,cell_passport)
+
+rm(entrez_IDS)
+
+gene_nodes = unique(c(as.character(fisher_network$g1),as.character(fisher_network$g2)))
+
+Sanger_Shuffle_Corrected_FC$Mod_Z_Score = (Sanger_Shuffle_Corrected_FC$MEAN_FC - Sanger_Shuffle_Corrected_FC$MEAN_FC_Shuffle_Mean)/Sanger_Shuffle_Corrected_FC$SD_Shuffle_Mean
+
+hit_gene_tab <- avana_res %>% filter(hit == 1) %>% filter(GENE %in% gene_nodes) %>% droplevels() %>% pull(GENE)
+hit_gene_tab <- table(hit_gene_tab)
+hit_gene_tab <- hit_gene_tab[hit_gene_tab > 1]
+```
+
+With both data set up, joining them together to compare
+```{r data_join}
+results_avana <- avana_res
+results_sanger <- Sanger_Shuffle_Corrected_FC
+
+results_sanger$entrezid_cell = paste(results_sanger$entrez_ID,results_sanger$Cell_Line,sep = "_")
+results_avana$entrezid_cell = paste(results_avana$entrez_ID,results_avana$Cell_Line,sep = "_")
+
+results_sanger$gene_cell = paste(results_sanger$GENE,results_sanger$Cell_Line,sep = "_")
+results_avana$gene_cell = paste(results_avana$GENE,results_avana$Cell_Line,sep = "_")
+
+results_avana_omit <- results_avana %>% filter(entrezid_cell %in% results_sanger$entrezid_cell) %>% filter(!is.na(entrez_ID))
+results_sanger_omit <- results_sanger %>% filter(entrezid_cell %in% results_avana$entrezid_cell) %>% filter(!is.na(entrez_ID))
+
+results_avana_omit <- results_avana_omit %>% dplyr::select(GENE,Cell_Line,MEAN_FC,percentage,Mod_Z_Score,MEAN_FC_Shuffle_Mean,SD_Shuffle_Mean,entrez_ID,entrezid_cell,hit)
+results_sanger_omit <- results_sanger_omit %>% dplyr::select(GENE,Cell_Line,MEAN_FC,percentage,Mod_Z_Score,MEAN_FC_Shuffle_Mean,SD_Shuffle_Mean,entrez_ID,entrezid_cell,Cosmic_TSG)
+
+colnames(results_avana_omit) = c("GENE_Avana","Cell_Line","Avana_MEAN_FC","Avana_percentage","Avana_Mod_Z_Score",
+                                 "Avana_MEAN_FC_Shuffle_Mean","Avana_SD_Shuffle_Mean",
+                                 "Avana_entrez_ID","entrezid_cell","hit")
+
+colnames(results_sanger_omit) = c("GENE_Sanger","Cell_Line","Sanger_MEAN_FC","Sanger_percentage","Sanger_Mod_Z_Score",
+                                  "Sanger_MEAN_FC_Shuffle_Mean","Sanger_SD_Shuffle_Mean",
+                                  "Sanger_entrez_ID","entrezid_cell","Cosmic_TSG")
+
+comparison_Max <- merge(results_avana_omit,results_sanger_omit)
+
+comparison_Max$`Avana Status` = "Not a hit"
+comparison_Max$`Avana Status`[comparison_Max$hit == 1 & comparison_Max$GENE_Avana %in% names(hit_gene_tab)] = "Frequent Hit"
+
+```
+
+Supplementary Figure 3b
+```{r plot_3b}
+p <- comparison_Max %>% filter(`Avana Status` == "Frequent Hit") %>%
+  ggplot(aes(x = Sanger_Mod_Z_Score,y = Avana_Mod_Z_Score)) + geom_vline(xintercept = 0, color = "red") + ylim(0,max(comparison_Max$Avana_Mod_Z_Score)) +
+  geom_point() + theme_Publication() + xlab("Sanger Mod Z-Score") + ylab("Avana Mod Z-Score") + ggtitle("Avana Frequent Hits in Sanger") + geom_abline() 
+p1 <- ggExtra::ggMarginal(p, type = "histogram", margins = "x", size = 4)
+
+p1
+
+```
+
+Alternative plot showing that the density is shifted
+```{r plot_3b_alt}
+p2 <- comparison_Max %>% ggplot(aes(Sanger_Mod_Z_Score,fill = `Avana Status`)) + geom_density(alpha = 0.5) + theme_Publication() +
+  scale_fill_manual(values=c("#13d4c0","#999999"))  + xlab("Sanger Modified Z-Score") + ylab("Density") + ggtitle("Avana Frequent Hits in Sanger")
+
+p2
+
+```
+
+PR Curve for Sanger and Avana. TP = TSGs, FP = Onco, recall in this instance is defined as the number of hits observed.
+Filtered for cell lines selected in both sets. Code is analogous to code used to generate PR curve observed in figure 1.
+```{r PR_Curve}
+comparison_Max$NEG = 0
+comparison_Max$NEG[comparison_Max$Avana_entrez_ID %in% NEGv1$ENTREZ_ID] = 1
+
+oncogenes_scores <- comparison_Max %>% filter(Avana_entrez_ID %in% oncogenes_all) %>% droplevels() %>% pull(Avana_Mod_Z_Score)
+NEG_scores <- comparison_Max %>% filter(NEG == 1) %>% droplevels() %>% pull(Avana_Mod_Z_Score)
+tsg_scores <- comparison_Max %>% filter(Cosmic_TSG == 1) %>% droplevels() %>% pull(Avana_Mod_Z_Score)
+FP = c(oncogenes_scores,NEG_scores)
+pr_mod_Z_avana <-pr.curve(scores.class0 = tsg_scores , scores.class1 = FP, curve = TRUE)
+pr_mod_Z_avana_dat <- data.frame(Recall = pr_mod_Z_avana$curve[,1],Precision = pr_mod_Z_avana$curve[,2],Score = pr_mod_Z_avana$curve[,3])
+pr_mod_Z_avana_dat $Precision = round(pr_mod_Z_avana_dat$Precision,digits = 2)
+pr_mod_Z_avana_dat$Recall = round(pr_mod_Z_avana_dat$Recall,digits = 2)
+pr_mod_Z_avana_dat$Score = round(pr_mod_Z_avana_dat$Score,digits = 2)
+pr_mod_Z_avana_dat <- pr_mod_Z_avana_dat %>% unique()
+
+observation_count <- sapply(pr_mod_Z_avana_dat$Score, function(x) length(tsg_scores[tsg_scores > x]))
+pr_mod_Z_avana_dat$count <- observation_count
+pr_mod_Z_avana_dat <- pr_mod_Z_avana_dat %>% arrange(count)
+
+oncogenes_scores <- comparison_Max %>% filter(Avana_entrez_ID %in% oncogenes_all) %>% droplevels() %>% pull(Sanger_Mod_Z_Score)
+NEG_scores <- comparison_Max %>% filter(NEG == 1) %>% droplevels() %>% pull(Sanger_Mod_Z_Score)
+tsg_scores <- comparison_Max %>% filter(Cosmic_TSG == 1) %>% droplevels() %>% pull(Sanger_Mod_Z_Score)
+FP = c(oncogenes_scores,NEG_scores)
+pr_mod_Z_sanger <-pr.curve(scores.class0 = tsg_scores , scores.class1 = FP, curve = TRUE)
+pr_mod_Z_sanger_dat <- data.frame(Recall = pr_mod_Z_sanger$curve[,1],Precision = pr_mod_Z_sanger$curve[,2],Score = pr_mod_Z_sanger$curve[,3])
+pr_mod_Z_sanger_dat $Precision = round(pr_mod_Z_sanger_dat$Precision,digits = 2)
+pr_mod_Z_sanger_dat$Recall = round(pr_mod_Z_sanger_dat$Recall,digits = 2)
+pr_mod_Z_sanger_dat$Score = round(pr_mod_Z_sanger_dat$Score,digits = 2)
+pr_mod_Z_sanger_dat <- pr_mod_Z_sanger_dat %>% unique()
+
+observation_count <- sapply(pr_mod_Z_sanger_dat$Score, function(x) length(tsg_scores[tsg_scores > x]))
+pr_mod_Z_sanger_dat$count <- observation_count
+pr_mod_Z_sanger_dat <- pr_mod_Z_sanger_dat %>% arrange(count)
+
+pr_mod_Z_sanger_dat <- as.data.table(pr_mod_Z_sanger_dat)
+pr_mod_Z_sanger_dat_plot <- as.data.frame(pr_mod_Z_sanger_dat[,.SD[which.max(count)],by=Precision]) %>% fix_count()
+pr_mod_Z_avana_dat <- as.data.table(pr_mod_Z_avana_dat)
+pr_mod_Z_avana_dat_plot <- as.data.frame(pr_mod_Z_avana_dat[,.SD[which.max(count)],by=Precision]) %>% fix_count()
+
+ggplot() + ylim(c(0.8,1)) + xlim(c(0,250)) + theme_Publication() + ylab("Precision") + xlab("Count") +
+  geom_line(aes(y = pr_mod_Z_avana_dat_plot$Precision, x = pr_mod_Z_avana_dat_plot$count, color = "Avana"),alpha = 0.8,color="red") +
+  geom_line(aes(y = pr_mod_Z_sanger_dat_plot$Precision, x = pr_mod_Z_sanger_dat_plot$count, color = "Sanger"),alpha = 0.8,color="black") +
+  theme(legend.position="right") +
+  geom_hline(yintercept = 0.9,color="black", linetype= 3)
+
+```

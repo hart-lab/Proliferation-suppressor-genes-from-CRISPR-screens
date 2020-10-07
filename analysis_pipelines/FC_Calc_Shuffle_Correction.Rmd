@@ -1,0 +1,642 @@
+---
+title: "Fold-Change Calculation Shuffle Correction"
+output:
+  html_document:
+    df_print: paged
+---
+
+The following code was used to generate shuffled fold-change distributions in order to calculate modified z-scores. Each code chunk starts with a different data set used with a different library (Wang AML screens, Sanger DepMap, and Avana DepMap). Code chunks vary with data manipulation, however bootstrapping loops remain relatively constant. Each code chunk starts from calculated fold-change data (CRISPRCleanR corrected for Avana and Sanger DepMap data sets, FCs directly from Wang raw reads).
+
+
+##R Session
+Not all libraries were used for each code chunk. 
+
+```{r session}
+rm(list = ls())
+if (is.integer(dev.list())) {
+  dev.off()
+}
+cat("\014")
+source("./functions.R")
+set.seed(1)
+sessionInfo()
+
+```
+
+##Avana Data
+
+``` {r Avana}
+rm(list = ls())
+if (is.integer(dev.list())) {
+  dev.off()
+}
+cat("\014")
+source("./functions.R")
+set.seed(1)
+
+### Post crisprcleanr fold-change data
+
+fold_dat <-
+  read_delim(
+    "Data/Avana_FC_Comb_FC_Corrected",
+    "\t",
+    escape_double = FALSE,
+    trim_ws = TRUE
+  )
+
+head(fold_dat)
+
+### Loading in replicate map
+
+replicate_map <-
+  read_delim(
+    "Data/replicate_map.csv",
+    ",",
+    escape_double = FALSE,
+    trim_ws = TRUE
+  )
+
+head(replicate_map)
+
+replicate_map <- replicate_map %>% dplyr::select(-pDNA_batch)
+
+fold_dat <- gather(fold_dat, replicate_ID, FC, -c(X1, GENE))
+
+replicate_map_change <- replicate_map
+
+### Manipulating replicate map to be consistent
+
+replicate_map_change$replicate_ID <-
+  gsub(' ', '_', replicate_map_change$replicate_ID)
+
+replicate_map_change$replicate_ID <-
+  gsub('/', '_', replicate_map_change$replicate_ID)
+
+replicate_map_change$replicate_ID <-
+  gsub(',', '_', replicate_map_change$replicate_ID)
+
+### Some replicates didn't match up perfectly, needed to isolate those and handle them independently
+
+fold_dat_found <-
+  fold_dat %>% filter(replicate_ID %in% replicate_map$replicate_ID)
+
+fold_dat_miss <-
+  fold_dat %>% filter(replicate_ID %!in% replicate_map$replicate_ID)
+
+unique(fold_dat_miss$replicate_ID[fold_dat_miss$replicate_ID %!in% replicate_map_change$replicate_ID])
+
+fold_dat_found <-
+  left_join(fold_dat_found, replicate_map, by = "replicate_ID")
+
+fold_dat_miss <-
+  left_join(fold_dat_miss, replicate_map_change, by = "replicate_ID")
+
+fold_dat <- rbind(fold_dat_found, fold_dat_miss)
+
+fold_dat_sd_cell <-
+  data.frame(Cell_Line = character(0), SD_Shuffle = numeric(0))
+
+fold_dat_mean_cell <-
+  data.frame(Cell_Line = character(0), MEAN_FC_Shuffle = numeric(0))
+
+length(unique(fold_dat$DepMap_ID)) #563
+
+temp <- fold_dat
+
+### Adding the entrez IDs for bulk of analysis. 
+
+V1 <- as.vector(as.character(temp$GENE))
+
+entrez_IDS <- mapIds(org.Hs.eg.db, V1, 'ENTREZID', 'SYMBOL')
+
+temp$entrez_ID <- entrez_IDS
+
+rm(
+  entrez_IDS,
+  V1,
+  temp,
+  fold_dat_found,
+  fold_dat_miss,
+  replicate_map_change,
+  replicate_map
+)
+
+### Calculating null distribution mean and sd for modified z-score. run 1000 times, only 1 time here for example purposes
+
+for (cell in unique(fold_dat$DepMap_ID)) {
+  print(cell)
+  fold_dat_shuffle <- fold_dat %>% filter(DepMap_ID == cell)
+  #  for (i in 1:1000) {
+  for (i in 1) {
+    print(i)
+    temp <- fold_dat_shuffle
+    temp$FC <- ave(temp$FC, temp$DepMap_ID, FUN = sample)
+    fold_dat_shuffle_agg <-
+      aggregate(
+        temp$FC,
+        by = list(temp$GENE, temp$DepMap_ID),
+        FUN = mean,
+        na.rm = TRUE
+      )
+    fold_dat_shuffle_mean_cell <-
+      aggregate(
+        fold_dat_shuffle_agg$x,
+        by = list(fold_dat_shuffle_agg$Group.2),
+        FUN = mean,
+        na.rm = TRUE
+      )
+    fold_dat_shuffle_sd_cell <-
+      aggregate(
+        fold_dat_shuffle_agg$x,
+        by = list(fold_dat_shuffle_agg$Group.2),
+        FUN = sd,
+        na.rm = TRUE
+      )
+    colnames(fold_dat_shuffle_sd_cell) <-
+      c("Cell_Line", "SD_Shuffle")
+    colnames(fold_dat_shuffle_mean_cell) <-
+      c("Cell_Line", "MEAN_FC_Shuffle")
+    fold_dat_sd_cell <-
+      rbind(fold_dat_sd_cell, fold_dat_shuffle_sd_cell)
+    fold_dat_mean_cell <-
+      rbind(fold_dat_mean_cell, fold_dat_shuffle_mean_cell)
+  }
+}
+
+#write_delim(fold_dat_mean_cell,"Data/fold_dat_shuffle_meanFC_Avana.txt",delim = "\t")
+
+#write_delim(fold_dat_sd_cell,"Data/fold_dat_shuffle_sdFC_Avana.txt",delim = "\t")
+
+### Not writing files since it was a single simulation. Loading in original shuffled mean and sds 
+
+fold_dat_mean_cell <-
+  read.delim("Data/fold_dat_shuffle_meanFC_Avana.txt")
+
+head(fold_dat_mean_cell)
+
+fold_dat_sd_cell <-
+  read.delim("Data/fold_dat_shuffle_sdFC_Avana.txt")
+
+head(fold_dat_sd_cell)
+
+### Aggregating these values and adding various other metrics in addition (once considered for to identify proliferation suppressor phenotype)
+
+fold_dat_sd_cell_temp <- fold_dat_sd_cell
+
+fold_dat_sd_cell_temp <-
+  aggregate(
+    fold_dat_sd_cell_temp$SD_Shuffle,
+    by = list(fold_dat_sd_cell_temp$Cell_Line),
+    FUN = mean,
+    na.rm = TRUE
+  )
+
+colnames(fold_dat_sd_cell_temp) <- c("Cell_Line", "SD_Shuffle_Mean")
+
+fold_dat_mean_cell_temp <- fold_dat_mean_cell
+
+fold_dat_mean_cell_temp <-
+  aggregate(
+    fold_dat_mean_cell_temp$MEAN_FC_Shuffle,
+    by = list(fold_dat_mean_cell_temp$Cell_Line),
+    FUN = mean,
+    na.rm = TRUE
+  )
+
+colnames(fold_dat_mean_cell_temp) <-
+  c("Cell_Line", "MEAN_FC_Shuffle_Mean")
+
+fold_dat_mean <-
+  aggregate(
+    fold_dat$FC,
+    by = list(fold_dat$GENE, fold_dat$DepMap_ID),
+    FUN = mean,
+    na.rm = TRUE
+  )
+
+colnames(fold_dat_mean)  <- c("GENE", "Cell_Line", "MEAN_FC")
+
+fold_dat_results <- merge(fold_dat_mean, fold_dat_mean_cell_temp)
+
+fold_dat_results <- merge(fold_dat_results, fold_dat_sd_cell_temp)
+
+fold_dat_count <- fold_dat %>% dplyr::count(GENE, DepMap_ID)
+
+temp <- fold_dat %>% filter(FC > 0)
+
+fold_dat_count_above <- temp %>% dplyr::count(GENE, DepMap_ID)
+
+colnames(fold_dat_count_above) <- c("GENE", "Cell_Line", "n_above")
+
+colnames(fold_dat_count) <- c("GENE", "Cell_Line", "n")
+
+fold_dat_count <-
+  merge(fold_dat_count, fold_dat_count_above, all.x = TRUE)
+
+fold_dat_count$n_above[is.na(fold_dat_count$n_above)] <- 0
+
+rm(fold_dat_count_above, temp)
+
+colnames(fold_dat_count)[2] <- "Cell_Line"
+
+### Looking at positive number of guides, something we considered to identify the phenotype at one point. 
+
+fold_dat_count$percentage <- fold_dat_count$n_above / fold_dat_count$n
+
+fold_dat_results <-
+  merge(fold_dat_results, fold_dat_count, all.x = TRUE)
+
+fold_dat_results$percentage <- round(fold_dat_results$percentage, digits = 5)
+
+fold_dat_results$MEAN_FC <- round(fold_dat_results$MEAN_FC, digits = 6)
+
+fold_dat_results$MEAN_FC_Shuffle_Mean <- round(fold_dat_results$MEAN_FC_Shuffle_Mean, digits = 6)
+
+fold_dat_results$SD_Shuffle_Mean <- round(fold_dat_results$SD_Shuffle_Mean, digits = 6)
+
+# write_delim(fold_dat_results, "Data/Avana_Shuffle_Corrected_FC.txt", delim = "\t")
+
+head(fold_dat_results)
+```
+
+##Sanger Data:
+
+```{r sanger}
+rm(list = ls())
+if (is.integer(dev.list())) {
+  dev.off()
+}
+cat("\014")
+source("./functions.R")
+set.seed(1)
+
+##loading in fold change data
+
+fold_dat <-
+  read_delim(
+    "Data/Sanger_FC_Comb_FC_Corrected",
+    "\t",
+    escape_double = FALSE,
+    trim_ws = TRUE
+  )
+
+head(fold_dat)
+
+sanger_meta <- read.delim("Data/sanger_meta.txt")
+
+head(sanger_meta)
+
+### Gathering data to be long tables
+
+fold_dat <- gather(fold_dat, replicate_ID, FC, -c(GENE, X1))
+
+reps <- fold_dat %>% dplyr::select(replicate_ID) %>% unique()
+
+### Matching the screen names to their corresponding replicates
+
+reps$match <- 0
+
+for (i in unique(reps$replicate_ID)) {
+  find <- grep(i, sanger_meta$Experiment_Identifier)
+  if (length(find) > 0) {
+    reps$match[reps$replicate_ID == i] <- as.character(sanger_meta$Cell_Line[find])
+  }
+}
+
+reps <- reps %>% filter(match != 0) %>% unique()
+
+fold_dat <- fold_dat %>% filter(replicate_ID %in% reps$replicate_ID)
+
+fold_dat <- right_join(fold_dat, reps, by = "replicate_ID")
+
+fold_dat$FC <- round(fold_dat$FC, 6)
+
+fold_dat <-
+  fold_dat %>% filter(!is.na(FC)) %>% filter(!is.na(match)) %>% filter(!is.na(GENE))
+
+### Demonstrating strategy on one specific cell line.
+
+fold_dat_temp <- fold_dat %>% filter(match == "SIDM00499")
+
+fold_dat_temp_shuffle <- fold_dat_temp
+
+fold_dat_temp_shuffle$FC <-
+  ave(fold_dat_temp_shuffle$FC, fold_dat_temp_shuffle$match, FUN = sample)
+
+fold_dat_temp_shuffle <-
+  aggregate(
+    fold_dat_temp_shuffle$FC,
+    by = list(fold_dat_temp_shuffle$GENE, fold_dat_temp_shuffle$match),
+    FUN = mean,
+    na.rm = TRUE
+  )
+
+fold_dat_temp <-
+  aggregate(
+    fold_dat_temp$FC,
+    by = list(fold_dat_temp$GENE, fold_dat_temp$match),
+    FUN = mean,
+    na.rm = TRUE
+  )
+
+### Demonstrating Strategy
+
+rm(fold_dat_temp, fold_dat_temp_shuffle)
+
+fold_dat_sd_cell <-
+  data.frame(Cell_Line = character(0), SD_Shuffle = numeric(0))
+
+fold_dat_mean_cell <-
+  data.frame(Cell_Line = character(0), MEAN_FC_Shuffle = numeric(0))
+
+###Shuffling guides and calculating null distribution 1000 times, only calculating once for demonstration purposes.
+
+for (cell in unique(fold_dat$match)) {
+  print(cell)
+  fold_dat_shuffle <- fold_dat %>% filter(match == cell)
+  #  for (i in 1:1000) {
+  for (i in 1) {
+    print(i)
+    temp <- fold_dat_shuffle
+    temp$FC <- ave(temp$FC, temp$match, FUN = sample)
+    fold_dat_shuffle_agg <-
+      aggregate(
+        temp$FC,
+        by = list(temp$GENE, temp$match),
+        FUN = mean,
+        na.rm = TRUE
+      )
+    fold_dat_shuffle_mean_cell <-
+      aggregate(
+        fold_dat_shuffle_agg$x,
+        by = list(fold_dat_shuffle_agg$Group.2),
+        FUN = mean,
+        na.rm = TRUE
+      )
+    fold_dat_shuffle_sd_cell <-
+      aggregate(
+        fold_dat_shuffle_agg$x,
+        by = list(fold_dat_shuffle_agg$Group.2),
+        FUN = sd,
+        na.rm = TRUE
+      )
+    colnames(fold_dat_shuffle_sd_cell) <-
+      c("Cell_Line", "SD_Shuffle")
+    colnames(fold_dat_shuffle_mean_cell) <-
+      c("Cell_Line", "MEAN_FC_Shuffle")
+    fold_dat_sd_cell <-
+      rbind(fold_dat_sd_cell, fold_dat_shuffle_sd_cell)
+    fold_dat_mean_cell <-
+      rbind(fold_dat_mean_cell, fold_dat_shuffle_mean_cell)
+  }
+}
+
+###Write files commented out to avoid over writing 
+
+#write_delim(fold_dat_mean_cell,"./fold_dat_shuffle_meanFC_Sanger.txt",delim = "\t")
+#write_delim(fold_dat_sd_cell,"./fold_dat_shuffle_sdFC_Sanger.txt",delim = "\t")
+
+###Load in the original 1000 iterations.
+
+fold_dat_mean_cell <-
+  read.delim("Data/fold_dat_shuffle_meanFC_Sanger.txt")
+
+fold_dat_sd_cell <-
+  read.delim("Data/fold_dat_shuffle_sdFC_Sanger.txt")
+
+head(fold_dat_mean_cell)
+
+head(fold_dat_sd_cell)
+
+
+fold_dat_sd_cell_temp <- fold_dat_sd_cell
+
+fold_dat_sd_cell_temp <-
+  aggregate(
+    fold_dat_sd_cell_temp$SD_Shuffle,
+    by = list(fold_dat_sd_cell_temp$Cell_Line),
+    FUN = mean,
+    na.rm = TRUE
+  )
+
+colnames(fold_dat_sd_cell_temp) <- c("Cell_Line", "SD_Shuffle_Mean")
+
+###Aggregating the simulations as well as the raw mean fold change values. 
+
+fold_dat_mean_cell_temp <- fold_dat_mean_cell
+
+fold_dat_mean_cell_temp <-
+  aggregate(
+    fold_dat_mean_cell_temp$MEAN_FC_Shuffle,
+    by = list(fold_dat_mean_cell_temp$Cell_Line),
+    FUN = mean,
+    na.rm = TRUE
+  )
+
+colnames(fold_dat_mean_cell_temp) <-
+  c("Cell_Line", "MEAN_FC_Shuffle_Mean")
+
+fold_dat_mean <-
+  aggregate(
+    fold_dat$FC,
+    by = list(fold_dat$GENE, fold_dat$match),
+    FUN = mean,
+    na.rm = TRUE
+  )
+
+colnames(fold_dat_mean)  <- c("GENE", "Cell_Line", "MEAN_FC")
+
+fold_dat_results <- merge(fold_dat_mean, fold_dat_mean_cell_temp)
+
+fold_dat_results <- merge(fold_dat_results, fold_dat_sd_cell_temp)
+
+### At one point we also were considering the percentage of guides with positive FC as a methodology
+
+fold_dat_count <- fold_dat %>% dplyr::count(GENE, match)
+
+temp <- fold_dat %>% filter(FC > 0)
+
+fold_dat_count_above <- temp %>% dplyr::count(GENE, match)
+
+colnames(fold_dat_count_above) <- c("GENE", "match", "n_above")
+
+fold_dat_count <-
+  merge(fold_dat_count, fold_dat_count_above, all.x = TRUE)
+
+fold_dat_count$n_above[is.na(fold_dat_count$n_above)] <- 0
+
+rm(fold_dat_count_above, temp)
+
+colnames(fold_dat_count)[2] <- "Cell_Line"
+
+fold_dat_count$percentage <- fold_dat_count$n_above / fold_dat_count$n
+
+fold_dat_results <-
+  merge(fold_dat_results, fold_dat_count, all.x = TRUE)
+
+fold_dat_results$percentage <- round(fold_dat_results$percentage, digits = 5)
+
+#write_delim(fold_dat_results, "Sanger_Shuffle_Corrected_FC.txt", delim = "\t")
+
+head(fold_dat_results)
+```
+
+##Wang Data:
+
+```{r Wang}
+
+rm(list = ls())
+if (is.integer(dev.list())) {
+  dev.off()
+}
+cat("\014")
+source("./functions.R")
+set.seed(1)
+ 
+Wang_FC_combine <-
+  read.delim("Data/Wang_FC_combine.txt")
+
+#this data was already combined from previous efforts
+
+head(Wang_FC_combine)
+
+fold_dat_sd_cell <-
+  data.frame(Cell_Line = character(0), SD_Shuffle = numeric(0))
+
+fold_dat_mean_cell <-
+  data.frame(Cell_Line = character(0), MEAN_FC_Shuffle = numeric(0))
+
+for (cell in unique(Wang_FC_combine$Type)) {
+  print(cell)
+  fold_dat_shuffle <- Wang_FC_combine %>% filter(Type == cell)
+  #  for (i in 1:1000) {
+  for (i in 1) {
+    print(i)
+    temp <- fold_dat_shuffle
+    temp$FC <- ave(temp$FC, temp$Type, FUN = sample)
+    fold_dat_shuffle_agg <-
+      aggregate(
+        temp$FC,
+        by = list(temp$GENE, temp$Type),
+        FUN = mean,
+        na.rm = TRUE
+      )
+    fold_dat_shuffle_mean_cell <-
+      aggregate(
+        fold_dat_shuffle_agg$x,
+        by = list(fold_dat_shuffle_agg$Group.2),
+        FUN = mean,
+        na.rm = TRUE
+      )
+    fold_dat_shuffle_sd_cell <-
+      aggregate(
+        fold_dat_shuffle_agg$x,
+        by = list(fold_dat_shuffle_agg$Group.2),
+        FUN = sd,
+        na.rm = TRUE
+      )
+    colnames(fold_dat_shuffle_sd_cell) <-
+      c("Cell_Line", "SD_Shuffle")
+    colnames(fold_dat_shuffle_mean_cell) <-
+      c("Cell_Line", "MEAN_FC_Shuffle")
+    fold_dat_sd_cell <-
+      rbind(fold_dat_sd_cell, fold_dat_shuffle_sd_cell)
+    fold_dat_mean_cell <-
+      rbind(fold_dat_mean_cell, fold_dat_shuffle_mean_cell)
+  }
+}
+
+# write_delim(fold_dat_mean_cell,"Data/fold_dat_shuffle_meanFC_Wang.txt",delim = "\t")
+
+# write_delim(fold_dat_sd_cell, "Data/fold_dat_shuffle_sdFC_Wang.txt", delim = "\t")
+
+fold_dat_mean_cell <-
+  read.delim("Data/fold_dat_shuffle_meanFC_Wang.txt")
+
+fold_dat_sd_cell <-
+  read.delim("Data/fold_dat_shuffle_sdFC_Wang.txt")
+
+head(fold_dat_sd_cell)
+
+head(fold_dat_mean_cell)
+
+fold_dat_sd_cell_temp <- fold_dat_sd_cell
+
+fold_dat_sd_cell_temp <-
+  aggregate(
+    fold_dat_sd_cell_temp$SD_Shuffle,
+    by = list(fold_dat_sd_cell_temp$Cell_Line),
+    FUN = mean,
+    na.rm = TRUE
+  )
+
+colnames(fold_dat_sd_cell_temp) <- c("Cell_Line", "SD_Shuffle_Mean")
+
+fold_dat_mean_cell_temp <- fold_dat_mean_cell
+
+fold_dat_mean_cell_temp <-
+  aggregate(
+    fold_dat_mean_cell_temp$MEAN_FC_Shuffle,
+    by = list(fold_dat_mean_cell_temp$Cell_Line),
+    FUN = mean,
+    na.rm = TRUE
+  )
+
+colnames(fold_dat_mean_cell_temp) <-
+  c("Cell_Line", "MEAN_FC_Shuffle_Mean")
+
+fold_dat_mean <-
+  aggregate(
+    Wang_FC_combine$FC,
+    by = list(Wang_FC_combine$GENE, Wang_FC_combine$Type),
+    FUN = mean,
+    na.rm = TRUE
+  )
+
+colnames(fold_dat_mean)  <- c("GENE", "Cell_Line", "MEAN_FC")
+
+fold_dat_results <- merge(fold_dat_mean, fold_dat_mean_cell_temp)
+
+fold_dat_results <- merge(fold_dat_results, fold_dat_sd_cell_temp)
+
+fold_dat_count <- Wang_FC_combine %>% dplyr::count(GENE, REAGENT_ID)
+
+temp <- Wang_FC_combine %>% filter(FC > 0)
+
+fold_dat_count_above <- temp %>% dplyr::count(GENE, Cell_Line)
+
+colnames(fold_dat_count_above) = c("GENE", "match", "n_above")
+
+fold_dat_count <-
+  merge(fold_dat_count, fold_dat_count_above, all.x = TRUE)
+
+fold_dat_count$n_above[is.na(fold_dat_count$n_above)] = 0
+
+rm(fold_dat_count_above, temp)
+
+colnames(fold_dat_count)[2] = "Cell_Line"
+
+fold_dat_count$percentage = fold_dat_count$n_above / fold_dat_count$n
+
+fold_dat_results <-
+  merge(fold_dat_results, fold_dat_count, all.x = TRUE)
+
+fold_dat_results$percentage = round(fold_dat_results$percentage, digits = 5)
+
+Wang_FC_cells <-
+  Wang_FC_combine %>% dplyr::select(Type, Cell_Line) %>% unique()
+
+colnames(fold_dat_results)[1] = "Type"
+
+fold_dat_results <- merge(fold_dat_results, Wang_FC_cells)
+
+# write_delim(fold_dat_results, "Data/Wang_Shuffle_Corrected_FC.txt", delim = "\t")
+
+head(fold_dat_results)
+```
+
+
+##Clear
+```{r clear}
+rm(list = ls())
+```

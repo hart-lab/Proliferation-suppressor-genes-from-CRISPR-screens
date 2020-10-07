@@ -1,0 +1,69 @@
+---
+title: "Target_data_prep"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+The following markdown contains code used to assemble the TARGET data used in Figure 6
+
+##Session Info
+```{r session}
+rm(list = ls())
+if (is.integer(dev.list())){dev.off()}
+cat("\014")
+set.seed(1)
+source("functions.R")
+sessionInfo()
+```
+
+Loading in data prep, matching the gene names
+```{r data_load}
+avana_res <- read.delim("Data/avana_output_v2.txt")
+
+TARGET <- read.delim("Data/TARGET-AML.htseq_fpkm-uq.tsv")
+
+TARGET <- TARGET %>% gather(Patient,Exp,-Ensembl_ID)
+
+V1 = gsub("\\..*","",TARGET$Ensembl_ID)
+ensemble_IDS <- mapIds(org.Hs.eg.db, V1, 'ENTREZID', 'ENSEMBL')
+TARGET$GENE = ensemble_IDS
+
+TARGET <- TARGET %>% filter(!is.na(GENE))
+TARGET <- TARGET %>% filter(GENE %in% avana_res$entrez_ID)
+
+rm(V1,ensemble_IDS)
+```
+
+Configuring age, and also event status
+```{r join_age}
+GDC_TARGET_expression <- read.delim("Data/GDC_TARGET_expression.tsv")
+GDC_TARGET_Age <- read.delim("Data/GDC_Target_Age.tsv")
+
+GDC_TARGET_expression <- GDC_TARGET_expression %>% dplyr::select(sample,Vital.Status,Overall.Survival.Time.in.Days,OS.time)
+GDC_TARGET_expression$X_EVENT <- 0
+GDC_TARGET_expression$X_EVENT[GDC_TARGET_expression$Vital.Status== "Dead"] <- 1
+colnames(GDC_TARGET_expression)[1] <- "Patient"
+
+TARGET$Patient <- gsub("\\.", "-", TARGET$Patient)
+
+TARGET <- TARGET %>% droplevels()
+
+TARGET <- merge(GDC_TARGET_expression,TARGET)
+
+TARGET$GENE <- gsub("\\.", "-", TARGET$GENE)
+TARGET$GENE <- gsub("-", "_", TARGET$GENE)
+
+colnames(TARGET)[8] <- "entrez_ID"
+gene_list <- avana_res %>% dplyr::select(GENE,entrez_ID) %>% unique() %>% droplevels()
+
+rm(avana_res)
+
+TARGET <- merge(TARGET,gene_list)
+TARGET <- TARGET %>% dplyr::select(-entrez_ID,-Overall.Survival.Time.in.Days,-Ensembl_ID)
+
+###commented out - but this is the data used for figure 6 
+#write_delim(TARGET,"Data/TARGET_Complete.txt",delim = "\t")
+```

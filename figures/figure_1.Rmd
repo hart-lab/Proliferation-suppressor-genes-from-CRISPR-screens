@@ -1,0 +1,1708 @@
+---
+title: "Figure1_with_supp"
+output: 
+  html_document:
+    fig_width: 10
+    fig_height: 10
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+The following markdown document contains the majority of code used to generate figures displayed in Figure 1, Supplementary Figure 1 & 2, and Supplementary Table 1. The code is not optimized for markdown viewership, as each plot was individually saved as a pdf.
+
+##Session Info
+```{r session}
+rm(list = ls())
+if (is.integer(dev.list())){dev.off()}
+cat("\014")
+set.seed(1)
+source("functions.R")
+sessionInfo()
+```
+
+##Figure 1A - F5 Cell Cycle Example
+```{r distribution_cell_cycle}
+
+###Load in Data
+
+Avana_Shuffle_Corrected_FC <- read.delim("Data/Avana_Shuffle_Corrected_FC.txt")
+
+cell_line_key <- read_csv("Data/DepMap-2018q4-celllines.csv")
+
+###Picking 4 genes noted to behave in pathway, we observed these genes to occur together early on.
+
+key.gns <- c("CDKN1A","TP53","CHEK2","TP53BP1")
+
+tp53_data <- Avana_Shuffle_Corrected_FC %>% filter(GENE %in% key.gns) 
+
+tp53_data <- aggregate(tp53_data$MEAN_FC, by=list(tp53_data$Cell_Line),FUN=mean, na.rm=TRUE)
+
+###Taking the cell line demonstrating the highest mean between these genes
+
+tp53_data <- tp53_data %>% filter(x == (max(x))) %>% droplevels() %>% pull(Group.1)
+
+plot_data <- Avana_Shuffle_Corrected_FC %>% filter(Cell_Line %in% tp53_data)
+
+tp53_data <- cell_line_key %>% filter(DepMap_ID == tp53_data) %>% droplevels %>% pull(Aliases) %>% as.character()
+
+###Taking a mixed model of the screen for non-essential/essential display purposes
+
+mixmdl <- normalmixEM(plot_data$MEAN_FC, k = 2)
+
+plot_labels <- plot_data %>% filter(GENE %in% key.gns)
+
+head(plot_data)
+
+#pdf("./paper_figs_code/fig/1-Distribution_W_Goal_Cell_Cycle.pdf",height = 10,width = 20)
+
+data.frame(x = mixmdl$x) %>%
+  ggplot() + ggtitle(tp53_data) + 
+  geom_density(aes(plot_data$MEAN_FC), colour = "black", 
+               fill = "lightgray") +
+  stat_function(geom = "line", fun = plot_mix_comps,
+                args = list(mixmdl$mu[1], mixmdl$sigma[1], lam = mixmdl$lambda[1]),
+                colour = "red", lwd = 1,alpha = 0.6) +
+  stat_function(geom = "line", fun = plot_mix_comps,
+                args = list(mixmdl$mu[2], mixmdl$sigma[2], lam = mixmdl$lambda[2]),
+                colour = "blue", lwd = 1,alpha = 0.6) +
+  ylab("Density") + xlab("Mean Log FC") + theme_Publication() + 
+###labeling the gene points
+    geom_text(
+    data = plot_labels, 
+    aes(x=plot_labels$MEAN_FC, y = 0.05), 
+    label = plot_labels$GENE,  hjust = 0,vjust = "inward",
+    size = 4, angle = 45, colour = "black"
+  ) 
+```
+
+##Figure 1B & 1C - demonstrating MEAN FC differences based on mutational profiles for TP53 and PTEN
+```{r tp53_v_pten}
+CCLE_mutations <- read.csv("Data/CCLE_mutations.csv")
+
+###Identifying TP53 and PTEN Mutations
+mutations <- CCLE_mutations %>% filter(Hugo_Symbol %in% c("TP53","PTEN")) %>%
+  filter(Variant_Classification != "Silent") %>% dplyr::select(Hugo_Symbol,DepMap_ID) %>% 
+  unique()
+
+plot_data <- Avana_Shuffle_Corrected_FC %>% filter(GENE == "TP53") 
+
+TP53_mut <- mutations %>% filter(Hugo_Symbol == "TP53") 
+
+plot_data$`Gene Status` = "None Detected"
+
+plot_data$`Gene Status`[plot_data$Cell_Line %in% TP53_mut$DepMap_ID] = "Mutation"
+
+p1 <- plot_data %>% ggplot(aes(x = `Gene Status`,y = MEAN_FC)) +
+  geom_beeswarm() +
+  theme_Publication() +
+  ggtitle("TP53") +
+  theme(plot.title = element_text(margin = margin(b = -10)),legend.position = 'none',text = element_text(size=24)) + xlab("") + ylab("Mean Fold-Change") +
+  stat_compare_means(method = "wilcox",size = 8)
+
+plot_data <- Avana_Shuffle_Corrected_FC %>% filter(GENE == "PTEN")
+
+PTEN_mut <- mutations %>% filter(Hugo_Symbol == "PTEN")
+
+plot_data$`Gene Status` = "None Detected"
+
+plot_data$`Gene Status`[plot_data$Cell_Line %in% PTEN_mut$DepMap_ID] = "Mutation"
+
+p2 <- plot_data %>% ggplot(aes(x = `Gene Status`,y = MEAN_FC)) +
+  geom_beeswarm() +
+  theme_Publication() + 
+  ggtitle("PTEN") +
+  theme(plot.title = element_text(margin = margin(b = -10)),legend.position = 'none',text = element_text(size=24)) +
+  xlab("") + ylab("Mean Fold-Change") +
+  stat_compare_means(method = "wilcox",size = 8)
+
+#Demonstrating differences between mutation profiles of PTEN and TP53
+
+plot_grid(p1, p2)
+
+```
+
+##Data Manipulation
+The following code block is some of the initial data manipulation used for the precision, count plot, as well as corresponding box plots observed in figure 1.
+```{r data_manipulation}
+
+###Corrected FC Data
+
+Avana_Shuffle_Corrected_FC <-
+  read.delim("Data/Avana_Shuffle_Corrected_FC.txt")
+
+AVANA_Q2_19_FC <-
+  read.delim("Data/AVANA_Q2_19_FC.txt")
+
+cell_line_key <- read_csv("Data/DepMap-2018q4-celllines.csv")
+
+key.gns <- c("CDKN1A", "TP53", "CHEK2", "TP53BP1")
+
+tp53_data <-
+  Avana_Shuffle_Corrected_FC %>% filter(GENE %in% key.gns)
+
+tp53_data <-
+  aggregate(
+    tp53_data$MEAN_FC,
+    by = list(tp53_data$Cell_Line),
+    FUN = mean,
+    na.rm = TRUE
+  )
+
+###identifying F5 again
+
+tp53_data <-
+  tp53_data %>% filter(x == (max(x))) %>% droplevels() %>% pull(Group.1)
+
+plot_data <-
+  Avana_Shuffle_Corrected_FC %>% filter(Cell_Line %in% tp53_data)
+
+tp53_name <-
+  cell_line_key %>% filter(DepMap_ID == tp53_data) %>% droplevels %>% pull(Aliases) %>% as.character()
+
+dat <- merge(Avana_Shuffle_Corrected_FC, AVANA_Q2_19_FC)
+
+rm(AVANA_Q2_19_FC, Avana_Shuffle_Corrected_FC)
+
+cancer_gene_census <- read_csv("Data/cancer_gene_census.csv")
+
+###Loading in Nonessential genes, COSMIC genes, as well as other methods attempted 
+
+NEGv1 <- read.delim("Data/NEGv1.txt")
+
+cosmic_tsg <- cancer_gene_census %>%
+  filter(grepl("TSG", `Role in Cancer`))
+
+CERES <- read_csv("Data/CERES.csv")
+
+CERES_cols <- CERES$X1
+
+CERES$X1 <- NULL
+
+CERES <- as.data.frame(t(CERES))
+
+CERES$GENE <- rownames(CERES)
+
+CERES_GENEs = str_split_fixed(CERES$GENE, " [(]", 2)
+
+CERES$GENE <- NULL
+
+colnames(CERES) <- CERES_cols
+
+CERES$GENE = as.vector(CERES_GENEs[1:17634,1])
+
+CERES <- gather(CERES,Cell_Line,Score,-GENE) #Positive Scores = NonEssentials
+
+V1 <- as.vector(as.character(CERES$GENE))
+
+entrez_IDS <- mapIds(org.Hs.eg.db, V1, 'ENTREZID', 'SYMBOL')
+
+CERES$entrez_ID = entrez_IDS
+
+CERES$Cosmic_TSG = 0
+
+CERES$Cosmic_TSG[CERES$entrez_ID %in% cosmic_tsg$`Entrez GeneId`] = 1
+
+CERES$NEG = 0
+
+CERES$NEG[CERES$entrez_ID %in% NEGv1$ENTREZ_ID] = 1
+
+JACKS <-
+  read_delim("Data/JACKS_result_gene_JACKS_results.txt", "\t")
+
+JACKS  <- gather(JACKS, Cell_Line, Score, -Gene)
+
+colnames(JACKS) <-
+  c("GENE", "Cell_Line", "Score") #Positive Scores = NonEssentials
+
+V1 <- as.vector(as.character(JACKS$GENE))
+
+entrez_IDS <- mapIds(org.Hs.eg.db, V1, 'ENTREZID', 'SYMBOL')
+
+JACKS$entrez_ID = entrez_IDS
+
+JACKS$Cosmic_TSG = 0
+
+JACKS$Cosmic_TSG[JACKS$entrez_ID %in% cosmic_tsg$`Entrez GeneId`] = 1
+
+JACKS$NEG = 0
+
+JACKS$NEG[JACKS$entrez_ID %in% NEGv1$ENTREZ_ID] = 1
+
+bf_list <-
+  read.delim("Data/table_Avana2019Q2_CRISPRcleanR_corrected_all")
+
+bf_list <- bf_list %>% gather(Cell_Line, BF, -GENE)
+
+bf_list$Cell_Line = gsub("[.]", "-", bf_list$Cell_Line)
+
+V1 <- as.vector(as.character(bf_list$GENE))
+
+entrez_IDS <- mapIds(org.Hs.eg.db, V1, 'ENTREZID', 'SYMBOL')
+
+bf_list$entrez_ID = entrez_IDS
+
+bf_list$Cosmic_TSG = 0
+
+bf_list$Cosmic_TSG[bf_list$entrez_ID %in% cosmic_tsg$`Entrez GeneId`] = 1
+
+bf_list$NEG = 0
+
+bf_list$NEG[bf_list$entrez_ID %in% NEGv1$ENTREZ_ID] = 1
+
+V1 <- as.vector(as.character(dat$GENE))
+
+entrez_IDS <- mapIds(org.Hs.eg.db, V1, 'ENTREZID', 'SYMBOL')
+
+dat$entrez_ID = entrez_IDS
+
+dat$Cosmic_TSG = 0
+
+dat$Cosmic_TSG[dat$entrez_ID %in% cosmic_tsg$`Entrez GeneId`] = 1
+
+dat$NEG = 0
+
+dat$NEG[dat$entrez_ID %in% NEGv1$ENTREZ_ID] = 1
+
+rm(V1, entrez_IDS, CERES_GENEs)
+
+###Calculating corrected modified Z score
+
+dat$Mod_Z_Score = (dat$MEAN_FC - dat$MEAN_FC_Shuffle_Mean) / dat$SD_Shuffle_Mean
+
+###Identifying oncogenes, need to omit TSG observations
+
+oncogenes_all <-
+  cancer_gene_census %>% filter(`Role in Cancer` %in%  c("oncogene, fusion", "oncogene")) %>%
+  droplevels() %>% pull(`Entrez GeneId`) %>% unique()
+
+###Rank method based on MEAN_FC
+
+dat$ranking <- ave(dat$MEAN_FC, dat$Cell_Line, FUN = rank)
+
+cells_JACKS <- JACKS$Cell_Line %>% unique() %>% as.vector()
+
+dat <- dat %>% filter(Cell_Line %in% cells_JACKS) %>% droplevels()
+
+CERES <-
+  CERES %>% filter(Cell_Line %in% cells_JACKS) %>% droplevels()
+
+bf_list <-
+  bf_list %>% filter(Cell_Line %in% cells_JACKS) %>% droplevels()
+
+```
+
+##Fig not used, shuffle z_score boxplot with f5 (similar to Supp Figs A-D)
+```{r mod_z_boxplots}
+
+###TSG All vs Oncogenes + NEG, this is the code use to identify FDR cutoff of 10%
+
+oncogenes_scores <-
+  dat %>% filter(Cell_Line == as.character(tp53_data)) %>% filter(entrez_ID %in% oncogenes_all) %>% droplevels() %>% pull(Mod_Z_Score)
+
+NEG_scores <-
+  dat %>% filter(Cell_Line == as.character(tp53_data)) %>% filter(NEG == 1) %>% droplevels() %>% pull(Mod_Z_Score)
+
+tsg_scores <-
+  dat %>% filter(Cell_Line == as.character(tp53_data)) %>% filter(Cosmic_TSG == 1) %>% droplevels() %>% pull(Mod_Z_Score)
+
+type <- c()
+
+type[1:length(oncogenes_scores)] <- "Oncogenes"
+
+type[length(oncogenes_scores) + 1:length(NEG_scores)] <-
+  "Non-Essential"
+
+type[length(oncogenes_scores) + length(NEG_scores) + 1:length(tsg_scores)] <-
+  "Tumor Suppressor"
+
+scores <- c(oncogenes_scores, NEG_scores, tsg_scores)
+
+dat_boxplot <- data.frame(type, scores)
+
+plot_labels <-
+  dat %>% filter(Cell_Line == as.character(tp53_data)) %>% filter(GENE %in% key.gns) %>% dplyr::select(GENE, Mod_Z_Score)
+
+plot_labels$type = "Tumor Suppressor"
+
+colnames(plot_labels)[2] = "scores"
+
+dat_boxplot <- merge(dat_boxplot, plot_labels, all = TRUE)
+
+my_comparisons <-
+  list(c("Oncogenes", "Tumor Suppressor"),
+       c("Non-Essential", "Tumor Suppressor"))
+
+p <-
+  dat_boxplot %>% ggplot(aes(y = scores, x = type, fill = type)) + geom_boxplot() + theme_Publication() +
+  theme(axis.text.x = element_text(
+    angle = 45,
+    hjust = 1,
+    size = 18
+  )) +
+  theme(legend.position = 'none') + ylab("Shuffled Z-Score") + xlab("Gene Type") +
+  stat_compare_means(comparisons = my_comparisons) + ggtitle(tp53_name) +
+  scale_fill_manual(values = c("#999999", "#E69F00", "#699186")) + geom_text(
+    data = dat_boxplot,
+    aes(type, scores, label = GENE),
+    vjust = -.5,
+    check_overlap = TRUE
+  )
+
+p$layers[[2]]$aes_params$textsize <- 8
+
+p
+```
+
+##PR for shuffled z-score
+```{r mod_z_pr_dat}
+oncogenes_scores <-
+  dat  %>% filter(entrez_ID %in% oncogenes_all) %>% droplevels() %>% pull(Mod_Z_Score)
+
+NEG_scores <-
+  dat %>% filter(NEG == 1) %>% droplevels() %>% pull(Mod_Z_Score)
+
+tsg_scores <-
+  dat %>% filter(Cosmic_TSG == 1) %>% droplevels() %>% pull(Mod_Z_Score)
+
+FP = c(oncogenes_scores, NEG_scores)
+
+pr_mod_Z <-
+  pr.curve(scores.class0 = tsg_scores ,
+           scores.class1 = FP,
+           curve = TRUE)
+
+pr_mod_Z_dat <-
+  data.frame(
+    Recall = pr_mod_Z$curve[, 1],
+    Precision = pr_mod_Z$curve[, 2],
+    Score = pr_mod_Z$curve[, 3]
+  )
+
+### rounding for data storage purposes
+
+pr_mod_Z_dat$Precision = round(pr_mod_Z_dat$Precision, digits = 5)
+
+pr_mod_Z_dat$Recall = round(pr_mod_Z_dat$Recall, digits = 5)
+
+pr_mod_Z_dat$Score = round(pr_mod_Z_dat$Score, digits = 2)
+
+pr_mod_Z_dat <- pr_mod_Z_dat %>% unique()
+
+###saving modified pr scores for mod Z
+
+#write_delim(pr_mod_Z_dat,"./Data/Mod_Z_pr_values.txt",delim = "\t")
+
+pr_mod_Z_dat <-
+  data.frame(
+    Recall = pr_mod_Z$curve[, 1],
+    Precision = pr_mod_Z$curve[, 2],
+    Score = pr_mod_Z$curve[, 3]
+  )
+
+pr_mod_Z_dat$Precision = round(pr_mod_Z_dat$Precision, digits = 2)
+
+pr_mod_Z_dat$Recall = round(pr_mod_Z_dat$Recall, digits = 2)
+
+pr_mod_Z_dat$Score = round(pr_mod_Z_dat$Score, digits = 2)
+
+pr_mod_Z_dat <- pr_mod_Z_dat %>% unique()
+
+###function is specific for each method value
+
+observation_count <-
+  sapply(pr_mod_Z_dat$Score, function(x)
+    length(tsg_scores[tsg_scores > x]))
+
+pr_mod_Z_dat$count <- observation_count
+
+pr_mod_Z_dat <- pr_mod_Z_dat %>% arrange(count)
+```
+
+##Supplementary Figure 1A - CERES pr results and boxplots
+```{r mean_fc_pr_dat}
+oncogenes_scores <-
+  dat %>% filter(entrez_ID %in% oncogenes_all) %>% droplevels() %>% pull(MEAN_FC)
+
+NEG_scores <-
+  dat %>% filter(NEG == 1) %>% droplevels() %>% pull(MEAN_FC)
+
+tsg_scores <-
+  dat %>% filter(Cosmic_TSG == 1) %>% droplevels() %>% pull(MEAN_FC)
+
+FP = c(oncogenes_scores, NEG_scores)
+
+pr_MEAN_FC <-
+  pr.curve(scores.class0 = tsg_scores ,
+           scores.class1 = FP,
+           curve = TRUE)
+
+pr_MEAN_FC_dat <-
+  data.frame(
+    Recall = pr_MEAN_FC$curve[, 1],
+    Precision = pr_MEAN_FC$curve[, 2],
+    Score = pr_MEAN_FC$curve[, 3]
+  )
+
+pr_MEAN_FC_dat$Precision = round(pr_MEAN_FC_dat$Precision, digits = 2)
+
+pr_MEAN_FC_dat$Recall = round(pr_MEAN_FC_dat$Recall, digits = 2)
+
+pr_MEAN_FC_dat$Score = round(pr_MEAN_FC_dat$Score, digits = 2)
+
+pr_MEAN_FC_dat <- pr_MEAN_FC_dat %>% unique()
+
+observation_count <-
+  sapply(pr_MEAN_FC_dat$Score, function(x)
+    length(tsg_scores[tsg_scores > x]))
+
+pr_MEAN_FC_dat$count <- observation_count
+
+pr_MEAN_FC_dat <- pr_MEAN_FC_dat %>% arrange(count)
+
+oncogenes_scores <-
+  dat %>% filter(Cell_Line == as.character(tp53_data)) %>% filter(entrez_ID %in% oncogenes_all) %>% droplevels() %>% pull(MEAN_FC)
+
+NEG_scores <-
+  dat %>% filter(Cell_Line == as.character(tp53_data)) %>% filter(NEG == 1) %>% droplevels() %>% pull(MEAN_FC)
+
+tsg_scores <-
+  dat %>% filter(Cell_Line == as.character(tp53_data)) %>% filter(Cosmic_TSG == 1) %>% droplevels() %>% pull(MEAN_FC)
+
+type <- c()
+
+type[1:length(oncogenes_scores)] <- "Oncogenes"
+
+type[length(oncogenes_scores) + 1:length(NEG_scores)] <-
+  "Non-Essential"
+
+type[length(oncogenes_scores) + length(NEG_scores) + 1:length(tsg_scores)] <-
+  "Tumor Suppressor"
+
+scores <- c(oncogenes_scores, NEG_scores, tsg_scores)
+
+dat_boxplot <- data.frame(type, scores)
+
+plot_labels <-
+  dat %>% filter(Cell_Line == as.character(tp53_data)) %>% filter(GENE %in% key.gns) %>% dplyr::select(GENE, MEAN_FC)
+
+plot_labels$type = "Tumor Suppressor"
+
+colnames(plot_labels)[2] = "scores"
+
+dat_boxplot <- merge(dat_boxplot, plot_labels, all = TRUE)
+
+my_comparisons <-
+  list(c("Oncogenes", "Tumor Suppressor"),
+       c("Non-Essential", "Tumor Suppressor"))
+
+p <-
+  dat_boxplot %>% ggplot(aes(y = scores, x = type, fill = type)) + geom_boxplot() + theme_Publication() +
+  theme(axis.text.x = element_text(
+    angle = 45,
+    hjust = 1,
+    size = 18
+  )) +
+  theme(legend.position = 'none') + ylab("Mean FC") + xlab("Gene Type") +
+  stat_compare_means(comparisons = my_comparisons) + ggtitle(tp53_name) +
+  scale_fill_manual(values = c("#999999", "#E69F00", "#699186")) + geom_text(
+    data = dat_boxplot,
+    aes(type, scores, label = GENE),
+    vjust = -.5,
+    check_overlap = TRUE
+  )
+
+p$layers[[2]]$aes_params$textsize <- 8
+
+p
+```
+
+##PR for ranking
+Box plot not made since it is identical to MEAN FC for single screen
+```{r ranking_pr_dat}
+oncogenes_scores <-
+  dat %>% filter(entrez_ID %in% oncogenes_all) %>% droplevels() %>% pull(ranking)
+
+NEG_scores <-
+  dat %>% filter(NEG == 1) %>% droplevels() %>% pull(ranking)
+
+tsg_scores <-
+  dat %>% filter(Cosmic_TSG == 1) %>% droplevels() %>% pull(ranking)
+
+FP = c(oncogenes_scores, NEG_scores)
+
+pr_ranking <-
+  pr.curve(scores.class0 = tsg_scores ,
+           scores.class1 = FP,
+           curve = TRUE)
+
+pr_ranking_dat <-
+  data.frame(
+    Recall = pr_ranking$curve[, 1],
+    Precision = pr_ranking$curve[, 2],
+    Score = pr_ranking$curve[, 3]
+  )
+
+pr_ranking_dat$Precision = round(pr_ranking_dat$Precision, digits = 2)
+
+pr_ranking_dat$Recall = round(pr_ranking_dat$Recall, digits = 2)
+
+pr_ranking_dat$Score = round(pr_ranking_dat$Score, digits = 2)
+
+pr_ranking_dat <- pr_ranking_dat %>% unique()
+
+observation_count <-
+  sapply(pr_ranking_dat$Score, function(x)
+    length(tsg_scores[tsg_scores > x]))
+
+pr_ranking_dat$count <- observation_count
+
+pr_ranking_dat <- pr_ranking_dat %>% arrange(count)
+```
+
+##Supplementary Figure 1B - JACKS pr results and boxplots
+```{r JACKS_pr}
+oncogenes_scores <-
+  JACKS %>% filter(entrez_ID %in% oncogenes_all) %>% droplevels() %>% pull(Score)
+
+NEG_scores <-
+  JACKS %>% filter(NEG == 1) %>% droplevels() %>% pull(Score)
+
+tsg_scores <-
+  JACKS %>% filter(Cosmic_TSG == 1) %>% droplevels() %>% pull(Score)
+
+FP = c(oncogenes_scores, NEG_scores)
+
+pr_JACKS <-
+  pr.curve(scores.class0 = tsg_scores ,
+           scores.class1 = FP,
+           curve = TRUE)
+
+pr_JACKS_dat <-
+  data.frame(
+    Recall = pr_JACKS$curve[, 1],
+    Precision = pr_JACKS$curve[, 2],
+    Score = pr_JACKS$curve[, 3]
+  )
+
+pr_JACKS_dat$Precision = round(pr_JACKS_dat$Precision, digits = 2)
+
+pr_JACKS_dat$Recall = round(pr_JACKS_dat$Recall, digits = 2)
+
+pr_JACKS_dat$Score = round(pr_JACKS_dat$Score, digits = 2)
+
+pr_JACKS_dat <- pr_JACKS_dat %>% unique()
+
+observation_count <-
+  sapply(pr_JACKS_dat$Score, function(x)
+    length(tsg_scores[tsg_scores > x]))
+
+pr_JACKS_dat$count <- observation_count
+
+pr_JACKS_dat <- pr_JACKS_dat %>% arrange(count)
+
+oncogenes_scores <-
+  JACKS %>% filter(Cell_Line == tp53_data) %>% filter(entrez_ID %in% oncogenes_all) %>% droplevels() %>% pull(Score)
+
+NEG_scores <-
+  JACKS %>% filter(Cell_Line == tp53_data) %>% filter(NEG == 1) %>% droplevels() %>% pull(Score)
+
+tsg_scores <-
+  JACKS %>% filter(Cell_Line == tp53_data) %>% filter(Cosmic_TSG == 1) %>% droplevels() %>% pull(Score)
+
+type <- c()
+
+type[1:length(oncogenes_scores)] <- "Oncogenes"
+
+type[length(oncogenes_scores) + 1:length(NEG_scores)] <-
+  "Non-Essential"
+
+type[length(oncogenes_scores) + length(NEG_scores) + 1:length(tsg_scores)] <-
+  "Tumor Suppressor"
+
+scores <- c(oncogenes_scores, NEG_scores, tsg_scores)
+
+dat_boxplot <- data.frame(type, scores)
+
+plot_labels <-
+  dat %>% filter(Cell_Line == as.character(tp53_data)) %>% filter(GENE %in% key.gns) %>% dplyr::select(GENE, Mod_Z_Score)
+
+plot_labels$type = "Tumor Suppressor"
+
+colnames(plot_labels)[2] = "scores"
+
+dat_boxplot <- merge(dat_boxplot, plot_labels, all = TRUE)
+
+my_comparisons <-
+  list(c("Oncogenes", "Tumor Suppressor"),
+       c("Non-Essential", "Tumor Suppressor"))
+
+p <-
+  dat_boxplot %>% ggplot(aes(y = scores, x = type, fill = type)) + geom_boxplot() + theme_Publication() +
+  theme(axis.text.x = element_text(
+    angle = 45,
+    hjust = 1,
+    size = 18
+  )) +
+  theme(legend.position = 'none') + ylab("JACKS Score") + xlab("Gene Type") +
+  stat_compare_means(comparisons = my_comparisons) + ggtitle(tp53_name) +
+  scale_fill_manual(values = c("#999999", "#E69F00", "#699186")) + geom_text(
+    data = dat_boxplot,
+    aes(type, scores, label = GENE),
+    vjust = -.5,
+    check_overlap = TRUE
+  )
+
+p$layers[[2]]$aes_params$textsize <- 8
+
+p
+```
+
+##Supplementary Figure 1C - CERES pr results and boxplots
+```{r ceres_pr}
+oncogenes_scores <-
+  CERES %>% filter(entrez_ID %in% oncogenes_all) %>% droplevels() %>% pull(Score)
+
+NEG_scores <-
+  CERES %>% filter(NEG == 1) %>% droplevels() %>% pull(Score)
+
+tsg_scores <-
+  CERES %>% filter(Cosmic_TSG == 1) %>% droplevels() %>% pull(Score)
+
+FP = c(oncogenes_scores, NEG_scores)
+
+pr_ceres <-
+  pr.curve(scores.class0 = tsg_scores ,
+           scores.class1 = FP,
+           curve = TRUE)
+
+pr_ceres_dat <-
+  data.frame(
+    Recall = pr_ceres$curve[, 1],
+    Precision = pr_ceres$curve[, 2],
+    Score = pr_ceres$curve[, 3]
+  )
+
+pr_ceres_dat$Precision = round(pr_ceres_dat$Precision, digits = 2)
+
+pr_ceres_dat$Recall = round(pr_ceres_dat$Recall, digits = 2)
+
+pr_ceres_dat$Score = round(pr_ceres_dat$Score, digits = 2)
+
+pr_ceres_dat <- pr_ceres_dat %>% unique()
+
+observation_count <-
+  sapply(pr_ceres_dat$Score, function(x)
+    length(tsg_scores[tsg_scores > x]))
+
+pr_ceres_dat$count <- observation_count
+
+pr_ceres_dat <- pr_ceres_dat %>% arrange(count)
+
+oncogenes_scores <-
+  CERES %>% filter(Cell_Line == tp53_data) %>% filter(entrez_ID %in% oncogenes_all) %>% droplevels() %>% pull(Score)
+
+NEG_scores <-
+  CERES %>% filter(Cell_Line == tp53_data) %>% filter(NEG == 1) %>% droplevels() %>% pull(Score)
+
+tsg_scores <-
+  CERES %>% filter(Cell_Line == tp53_data) %>% filter(Cosmic_TSG == 1) %>% droplevels() %>% pull(Score)
+
+type <- c()
+
+type[1:length(oncogenes_scores)] <- "Oncogenes"
+
+type[length(oncogenes_scores) + 1:length(NEG_scores)] <-
+  "Non-Essential"
+
+type[length(oncogenes_scores) + length(NEG_scores) + 1:length(tsg_scores)] <-
+  "Tumor Suppressor"
+
+scores <- c(oncogenes_scores, NEG_scores, tsg_scores)
+
+plot_labels <-
+  CERES %>% filter(Cell_Line == tp53_data) %>% filter(GENE %in% key.gns) %>% dplyr::select(GENE, Score)
+
+plot_labels$type = "Tumor Suppressor"
+
+colnames(plot_labels)[2] = "scores"
+
+scores <- c(oncogenes_scores, NEG_scores, tsg_scores)
+
+dat_boxplot <- data.frame(type, scores)
+
+dat_boxplot <- merge(dat_boxplot, plot_labels, all = TRUE)
+
+my_comparisons <-
+  list(c("Oncogenes", "Tumor Suppressor"),
+       c("Non-Essential", "Tumor Suppressor"))
+
+p <-
+  dat_boxplot %>% ggplot(aes(y = scores, x = type, fill = type)) + geom_boxplot() + theme_Publication() +
+  theme(axis.text.x = element_text(
+    angle = 45,
+    hjust = 1,
+    size = 18
+  )) +
+  theme(legend.position = 'none') + ylab("CERES Score") + xlab("Gene Type") +
+  stat_compare_means(comparisons = my_comparisons) + ggtitle(tp53_name) +
+  scale_fill_manual(values = c("#999999", "#E69F00", "#699186")) + geom_text(
+    data = dat_boxplot,
+    aes(type, scores, label = GENE),
+    vjust = -.5,
+    check_overlap = TRUE
+  )
+
+p$layers[[2]]$aes_params$textsize <- 8
+
+p
+```
+
+##Supplementary Figure 1D - BAGEL pr results and boxplots
+```{r bagel_pr}
+
+oncogenes_scores <-
+  bf_list %>% filter(entrez_ID %in% oncogenes_all) %>% droplevels() %>% pull(BF)
+
+NEG_scores <-
+  bf_list %>% filter(NEG == 1) %>% droplevels() %>% pull(BF)
+
+tsg_scores <-
+  bf_list %>% filter(Cosmic_TSG == 1) %>% droplevels() %>% pull(BF)
+
+FP = c(oncogenes_scores, NEG_scores)
+
+pr_bagel <-
+  pr.curve(
+    scores.class0 = -tsg_scores ,
+    scores.class1 = -FP,
+    curve = TRUE
+  )
+
+pr_bagel_dat <-
+  data.frame(
+    Recall = pr_bagel$curve[, 1],
+    Precision = pr_bagel$curve[, 2],
+    Score = pr_bagel$curve[, 3]
+  )
+
+tsg_scores <- -tsg_scores
+
+pr_bagel_dat$Precision = round(pr_bagel_dat$Precision, digits = 2)
+
+pr_bagel_dat$Recall = round(pr_bagel_dat$Recall, digits = 2)
+
+pr_bagel_dat$Score = round(pr_bagel_dat$Score, digits = 2)
+
+pr_bagel_dat <- pr_bagel_dat %>% unique()
+
+observation_count <-
+  sapply(pr_bagel_dat$Score, function(x)
+    length(tsg_scores[tsg_scores > x]))
+
+pr_bagel_dat$count <- observation_count
+
+pr_bagel_dat <- pr_bagel_dat %>% arrange(count)
+
+
+oncogenes_scores <-
+  bf_list %>% filter(Cell_Line == tp53_data) %>% filter(entrez_ID %in% oncogenes_all) %>% droplevels() %>% pull(BF)
+
+NEG_scores <-
+  bf_list %>% filter(Cell_Line == tp53_data) %>% filter(NEG == 1) %>% droplevels() %>% pull(BF)
+
+tsg_scores <-
+  bf_list %>% filter(Cell_Line == tp53_data) %>% filter(Cosmic_TSG == 1) %>% droplevels() %>% pull(BF)
+
+type <- c()
+
+type[1:length(oncogenes_scores)] <- "Oncogenes"
+
+type[length(oncogenes_scores) + 1:length(NEG_scores)] <-
+  "Non-Essential"
+
+type[length(oncogenes_scores) + length(NEG_scores) + 1:length(tsg_scores)] <-
+  "Tumor Suppressor"
+
+plot_labels <-
+  bf_list %>% filter(Cell_Line == tp53_data) %>% filter(GENE %in% key.gns) %>% dplyr::select(GENE, BF)
+
+plot_labels$type = "Tumor Suppressor"
+
+colnames(plot_labels)[2] = "scores"
+
+scores <- c(oncogenes_scores, NEG_scores, tsg_scores)
+
+dat_boxplot <- data.frame(type, scores)
+
+dat_boxplot <- merge(dat_boxplot, plot_labels, all = TRUE)
+
+my_comparisons <-
+  list(c("Oncogenes", "Tumor Suppressor"),
+       c("Non-Essential", "Tumor Suppressor"))
+
+p <-
+  dat_boxplot %>% ggplot(aes(y = scores, x = type, fill = type)) + geom_boxplot() + theme_Publication() +
+  theme(axis.text.x = element_text(
+    angle = 45,
+    hjust = 1,
+    size = 18
+  )) +
+  theme(legend.position = 'none') + ylab("Bagel BF") + xlab("Gene Type") +
+  stat_compare_means(comparisons = my_comparisons) + ggtitle(tp53_name) +
+  scale_fill_manual(values = c("#999999", "#E69F00", "#699186")) + geom_text(
+    data = dat_boxplot,
+    aes(type, scores, label = GENE),
+    vjust = -.5,
+    check_overlap = TRUE
+  )
+
+p$layers[[2]]$aes_params$textsize <- 8
+
+p
+
+```
+
+##Figure 1E - precision vs hit count plot.
+``` {r pr_count}
+# pr_ceres_dat
+# pr_bagel_dat
+# pr_JACKS_dat
+# pr_mod_Z_dat
+# pr_ranking_dat
+# pr_MEAN_FC_dat
+pr_mod_Z_dat <- as.data.table(pr_mod_Z_dat)
+pr_mod_Z_dat_plot <-
+  as.data.frame(pr_mod_Z_dat[, .SD[which.max(count)], by = Precision]) %>% fix_count()
+pr_bagel_dat <- as.data.table(pr_bagel_dat)
+pr_bagel_dat_plot <-
+  as.data.frame(pr_bagel_dat[, .SD[which.max(count)], by = Precision]) %>% fix_count()
+pr_ceres_dat <- as.data.table(pr_ceres_dat)
+pr_ceres_dat_plot <-
+  as.data.frame(pr_ceres_dat[, .SD[which.max(count)], by = Precision]) %>% fix_count()
+pr_JACKS_dat <- as.data.table(pr_JACKS_dat)
+pr_JACKS_dat_plot <-
+  as.data.frame(pr_JACKS_dat[, .SD[which.max(count)], by = Precision]) %>% fix_count()
+pr_MEAN_FC_dat <- as.data.table(pr_MEAN_FC_dat)
+pr_MEAN_FC_dat_plot <-
+  as.data.frame(pr_MEAN_FC_dat[, .SD[which.max(Score)], by = Precision]) %>% fix_count()
+pr_ranking_dat <- as.data.table(pr_ranking_dat)
+pr_ranking_dat_plot <-
+  as.data.frame(pr_ranking_dat[, .SD[which.max(Score)], by = Precision]) %>% fix_count()
+
+ggplot() + ylim(c(0.8, 1)) + xlim(c(0, 1000)) + theme_Publication() + ylab("Precision") + xlab("Count") +
+  geom_line(
+    aes(
+      y = pr_mod_Z_dat_plot$Precision,
+      x = pr_mod_Z_dat_plot$count,
+      color = "Shuffled Z-Score"
+    ),
+    alpha = 0.8,
+    color = "red"
+  ) +
+  geom_line(
+    aes(
+      y = pr_bagel_dat_plot$Precision,
+      x = pr_bagel_dat_plot$count,
+      color = "BAGEL"
+    ),
+    alpha = 0.8,
+    color = "green"
+  ) +
+  geom_line(
+    aes(
+      y = pr_ceres_dat_plot$Precision,
+      x = pr_ceres_dat_plot$count,
+      color = "CERES"
+    ),
+    alpha = 0.8,
+    color = "blue"
+  ) +
+  geom_line(
+    aes(
+      y = pr_ranking_dat_plot$Precision,
+      x = pr_ranking_dat_plot$count,
+      color = "Ranking"
+    ),
+    alpha = 0.8,
+    color = "violet"
+  ) +
+  geom_line(
+    aes(
+      y = pr_MEAN_FC_dat_plot$Precision,
+      x = pr_MEAN_FC_dat_plot$count,
+      color = "Mean FC"
+    ),
+    alpha = 0.8,
+    color = "gray"
+  ) +
+  geom_line(
+    aes(
+      y = pr_JACKS_dat_plot$Precision,
+      x = pr_JACKS_dat_plot$count,
+      color = "JACKS"
+    ),
+    alpha = 0.8,
+    color = "yellow"
+  ) +
+  theme(legend.position = "right") +
+  geom_hline(yintercept = 0.9,
+             color = "black",
+             linetype = 3)
+
+```
+
+##Figure 1D - Demonstrating the asym normalization - shuffled fold change strategy
+```{r asym_fix_code}
+###Demonstrating the shuffled fold change strategy
+
+rm(list = ls())
+if (is.integer(dev.list())){dev.off()}
+cat("\014")
+set.seed(1)
+source("functions.R")
+
+cell_line_key <- read_csv("Data/DepMap-2018q4-celllines.csv")
+
+cancer_gene_census <- read_csv("Data/cancer_gene_census.csv")
+
+cosmic_tsg <- cancer_gene_census %>%
+  filter(grepl("TSG",`Role in Cancer` ))
+
+###arranging fold_dat together
+
+fold_dat <- read_delim("Data/Avana_FC_Comb_FC_Corrected", "\t", escape_double = FALSE, trim_ws = TRUE)
+
+replicate_map <- read_delim("Data/replicate_map.csv", ",", escape_double = FALSE, trim_ws = TRUE)
+
+replicate_map <- replicate_map %>% dplyr::select(-pDNA_batch)
+
+fold_dat <- gather(fold_dat,replicate_ID,FC,-c(X1,GENE))
+
+replicate_map_change <- replicate_map
+
+replicate_map_change$replicate_ID <- gsub(' ', '_', replicate_map_change$replicate_ID)
+
+replicate_map_change$replicate_ID <- gsub('/', '_', replicate_map_change$replicate_ID)
+
+replicate_map_change$replicate_ID <- gsub(',', '_', replicate_map_change$replicate_ID)
+
+fold_dat_found <- fold_dat %>% filter(replicate_ID %in% replicate_map$replicate_ID)
+
+fold_dat_miss <- fold_dat %>% filter(replicate_ID %!in% replicate_map$replicate_ID)
+
+#unique(fold_dat_miss$replicate_ID[fold_dat_miss$replicate_ID %!in% replicate_map_change$replicate_ID])
+
+fold_dat_found <- left_join(fold_dat_found,replicate_map,by = "replicate_ID")
+
+fold_dat_miss <- left_join(fold_dat_miss,replicate_map_change,by = "replicate_ID")
+
+fold_dat <- rbind(fold_dat_found,fold_dat_miss)
+
+rm(fold_dat_found,fold_dat_miss)
+
+cells <- sample(unique(fold_dat$DepMap_ID),size = 1) %>% as.vector()
+
+fold_dat <- fold_dat %>% filter(DepMap_ID %in% cells)
+
+temp <- fold_dat
+
+V1 <- as.vector(as.character(temp$GENE))
+
+entrez_IDS <- mapIds(org.Hs.eg.db, V1, 'ENTREZID', 'SYMBOL')
+
+temp$entrez_ID = entrez_IDS
+
+rm(entrez_IDS,V1)
+
+fold_dat_temp <- aggregate(fold_dat$FC, by=list(fold_dat$GENE,fold_dat$DepMap_ID),FUN=mean, na.rm=TRUE)
+
+colnames(fold_dat_temp) = c("GENE","Cell_Line","Mean_FC")
+
+fold_dat_temp$Type = "Original"
+
+###sampling a cell type
+
+cell <- sample(unique(fold_dat$DepMap_ID),size = 1) %>% as.vector()
+
+fold_dat_shuffle <- fold_dat %>% filter(DepMap_ID == cell)
+
+fold_dat_shuffle$FC <- ave(fold_dat_shuffle$FC, fold_dat_shuffle$DepMap_ID, FUN = sample)
+
+fold_dat_shuffle <- aggregate(fold_dat_shuffle$FC, by=list(fold_dat_shuffle$GENE,fold_dat_shuffle$DepMap_ID),FUN=mean, na.rm=TRUE)
+
+colnames(fold_dat_shuffle) = c("GENE","Cell_Line","Mean_FC")
+
+fold_dat_shuffle$Type = "Shuffled"
+
+fold_dat_temp <- rbind(fold_dat_temp,fold_dat_shuffle)
+
+fold_dat_temp$Key = paste(fold_dat_temp$Cell_Line,fold_dat_temp$Type)
+
+```
+
+```{r asym_fix_plot}
+fold_dat_temp %>% ggplot(aes(x = Mean_FC , group = Key, fill = Type)) + 
+  geom_density(alpha = 0.8) + theme_Publication() + 
+  scale_fill_manual(
+    values = c("#d8dee6","#bf3737")
+  ) + theme(legend.position = 'none') + xlab("Mean Log(Fold-Change)") +ylab("Density")
+```
+
+##Supplementary Figure 1E & 1F - demonstrating change in sd not in mean
+```{r supp_fig_strategy_code}
+rm(list = ls())
+if (is.integer(dev.list())){dev.off()}
+cat("\014")
+set.seed(1)
+source("functions.R")
+
+Avana_Shuffle_Corrected_FC <- read.delim("Data/Avana_Shuffle_Corrected_FC.txt")
+cell_line_key <- read_csv("Data/DepMap-2018q4-celllines.csv")
+
+V1 <- as.vector(as.character(Avana_Shuffle_Corrected_FC$GENE))
+entrez_IDS <- mapIds(org.Hs.eg.db, V1, 'ENTREZID', 'SYMBOL')
+Avana_Shuffle_Corrected_FC$entrez_ID = entrez_IDS
+
+rm(entrez_IDS,V1)
+
+try <- aggregate(Avana_Shuffle_Corrected_FC$MEAN_FC, by= list(Avana_Shuffle_Corrected_FC$Cell_Line),mean)
+try2 <- aggregate(Avana_Shuffle_Corrected_FC$MEAN_FC, by= list(Avana_Shuffle_Corrected_FC$Cell_Line),sd)
+colnames(try) = c("Cell_Line","Mean_FC_Orig")
+colnames(try2) = c("Cell_Line","Mean_FC_SD")
+
+temp <- merge(try,try2)
+
+try <- Avana_Shuffle_Corrected_FC %>% dplyr::select(Cell_Line,MEAN_FC_Shuffle_Mean,SD_Shuffle_Mean) %>% unique()
+
+temp <- merge(temp,try)
+
+```
+
+```{r supp_fig_strategy_1}
+a <- temp %>% ggplot() + geom_beeswarm(aes(x = "Original", y = Mean_FC_Orig)) + ylab("Mean FC Per Screen") +
+  geom_beeswarm(aes(x = "Shuffled",y = MEAN_FC_Shuffle_Mean)) + theme_Publication() + xlab("") 
+print(a)
+```
+
+```{r supp_fig_strategy_2}
+b <- temp %>% ggplot() + geom_beeswarm(aes(x = "Original", y = Mean_FC_SD )) + 
+  geom_beeswarm(aes(x = "Shuffled",y = SD_Shuffle_Mean)) +
+  theme_Publication() + xlab("") + ylab("Standard Deviation Per Screen" )
+
+print(b)
+
+wilcox.test(temp$Mean_FC_Orig,temp$MEAN_FC_Shuffle_Mean)
+wilcox.test(temp$Mean_FC_SD,temp$SD_Shuffle_Mean)
+
+#plot_grid(a, b, labels = c('Mean FC', 'FC Standard Deviation'), label_size = 20)
+```
+
+##Resetting, loading in new data used for Figure 1F, 1G, Supplementary Figure 1G, Supplementary Figure 2(A-D), and Supplementary Table 1
+```{r session2}
+rm(list = ls())
+if (is.integer(dev.list())){dev.off()}
+cat("\014")
+set.seed(1)
+source("functions.R")
+
+avana_res <- read.delim("Data/avana_output_v2.txt")
+cell_line_key <- read_csv("Data/DepMap-2018q4-celllines.csv")
+cancer_gene_census <- read_csv("Data/cancer_gene_census.csv")
+temp_hits <- avana_res %>% filter(hit == 1) %>% droplevels()
+cosmic_tsg <- cancer_gene_census %>%
+  filter(grepl("TSG",`Role in Cancer` ))
+
+```
+
+##Top TSGs Observed, Counts
+```{r TSG_Bar}
+cosmic_tsg <- cancer_gene_census %>%
+  filter(grepl("TSG", `Role in Cancer`))
+
+num_cells <- length(unique(avana_res$Cell_Line))
+
+temp_cosmic <- temp_hits %>% filter(Cosmic_TSG == 1)
+
+tab <- table(temp_cosmic$GENE)
+
+tab <- tab %>% sort(decreasing = TRUE)
+
+tab <- tab[1:20]
+
+temp <- data.frame(GENE = names(tab), Count = tab)
+
+#####Plotting number of hits
+
+temp %>% ggplot(aes(
+  x = reorder(Count.Var1, -Count.Freq),
+  y = Count.Freq,
+  fill = "#699186"
+)) +
+  geom_bar(stat = "identity", color = '#699186') +
+  scale_fill_manual("Key", values = c("#469c83")) +
+  xlab("") +
+  ylab("Count") +
+  theme_Publication() +
+  theme(axis.text.x = element_text(
+    angle = 90,
+    hjust = 1,
+    size = 18
+  )) +
+  theme(legend.position = 'none')
+```
+
+##Figure 1F - Percentages of TSG hits
+```{r TSG_bar_percent}
+temp$Count.Freq = 100 * temp$Count.Freq / num_cells
+
+#####Plotting percentages
+
+temp %>% ggplot(aes(
+  x = reorder(Count.Var1, -Count.Freq),
+  y = Count.Freq,
+  fill = "#699186"
+)) +
+  geom_bar(stat = "identity", color = '#699186') +
+  scale_fill_manual("Key", values = c("#469c83")) +
+  xlab("") +
+  ylab("Percent of Cell Lines") +
+  theme_Publication() +
+  theme(axis.text.x = element_text(
+    angle = 90,
+    hjust = 1,
+    size = 18
+  )) +
+  theme(legend.position = 'none')
+
+```
+
+##Supplementary Table 1
+```{r supp_table}
+################COSMIC Defined Tumor Suppressor Signature in Genetic Screens.
+###Identifying COSMIC TSGs and creating table with general statistics
+
+cosmic_hits <-
+  avana_res %>% filter(entrez_ID %in% cosmic_tsg$`Entrez GeneId`) %>% droplevels() %>% filter(hit == 1)
+
+cosmic_hits$gene_cell = paste(cosmic_hits$GENE, cosmic_hits$Cell_Line)
+
+cosmic_data <-
+  avana_res %>% filter(entrez_ID %in% cosmic_hits$entrez_ID) %>% droplevels()
+
+cosmic_data$gene_cell = paste(cosmic_data$GENE, cosmic_data$Cell_Line)
+
+cosmic_data <-
+  cosmic_data %>% filter(gene_cell %!in% cosmic_hits$gene_cell)
+
+avana_hits <- avana_res %>% filter(hit == 1) %>% droplevels()
+
+cosmic_hits <-
+  avana_res %>% filter(entrez_ID %in% cosmic_tsg$`Entrez GeneId`) %>% droplevels() %>% filter(hit == 1)
+
+try <- cosmic_hits %>% droplevels()
+#unique(try$Cell_Line) # 249
+
+cosmic_hit_genes <- unique(cosmic_hits$GENE)
+
+cosmic_hit_table <-
+  avana_res %>% filter(GENE %in% cosmic_hit_genes) %>% droplevels()
+
+cosmic_hit_table_1 <- cosmic_hit_table %>% filter(hit == 1)
+
+cosmic_hit_table_0 <- cosmic_hit_table %>% filter(hit == 0)
+
+genes <- c()
+wilcox_tests <- c()
+fishers_test <- c()
+
+for (gene in unique(cosmic_hit_table$GENE)){
+  genes <- c(genes,gene)
+  temp_1 <- cosmic_hit_table_1 %>% filter(GENE == gene)
+  temp_0 <- cosmic_hit_table_0 %>% filter(GENE == gene)
+  x <- temp_1 %>% pull(Exp)
+  y <- temp_0 %>% pull(Exp)
+  if (!is.na(x[1])){
+    w_test <- wilcox.test(x,y,alternative = "greater")
+    w_test <- w_test$p.value
+  }
+  if (is.na(x[1])){
+    w_test <- "N/A"
+  }
+  wilcox_tests <- c(wilcox_tests,w_test)
+  hit_no_mut <- temp_1 %>% filter(mut == 0) %>% nrow()
+  hit_mut <- temp_1 %>% filter(mut == 1) %>% nrow()
+  non_hit_no_mut <- temp_0 %>% filter(mut == 0) %>% nrow()
+  non_hit_mut <- temp_0 %>% filter(mut == 1) %>% nrow()
+  
+  mutation_table <- matrix(c(hit_mut, non_hit_no_mut,hit_no_mut, non_hit_mut),nrow = 2,dimnames = list(PS_Status = c("PS_Hit", "PS_Non_Hit"), Mut_Status = c("Mut", "No_Mut")))
+  f_test <- fisher.test(mutation_table, alternative = "less")
+  fishers_test <- c(fishers_test,f_test$p.value)
+  
+}
+
+rm(f_test,w_test,hit_mut,hit_no_mut,non_hit_mut,non_hit_no_mut,x,y,temp_0,temp_1)
+
+hit_test <- tibble(genes,wilcox_tests,fishers_test)
+hit_test$wilcox_tests <- as.numeric(hit_test$wilcox_tests)
+#hit_test$wilcox_tests <- round(hit_test$wilcox_tests,digits = 5)
+
+hit_test$fishers_test <- as.numeric(hit_test$fishers_test)
+#hit_test$fishers_test <- round(hit_test$fishers_test,digits = 5)
+
+##### Aggregating the expression and mutational rates
+
+cosmic_hit_table_1_count <-
+  aggregate(
+    cosmic_hit_table_1$hit,
+    by = list(cosmic_hit_table_1$GENE),
+    FUN = sum,
+    na.rm = TRUE
+  )
+
+cosmic_hit_table_1_exp_mean <-
+  aggregate(
+    cosmic_hit_table_1$Exp,
+    by = list(cosmic_hit_table_1$GENE),
+    FUN = mean,
+    na.rm = TRUE
+  )
+
+cosmic_hit_table_1_exp_median <-
+  aggregate(
+    cosmic_hit_table_1$Exp,
+    by = list(cosmic_hit_table_1$GENE),
+    FUN = median,
+    na.rm = TRUE
+  )
+
+
+cosmic_hit_table_1_mut <-
+  aggregate(
+    cosmic_hit_table_1$mut,
+    by = list(cosmic_hit_table_1$GENE),
+    FUN = mean,
+    na.rm = TRUE
+  )
+
+cosmic_hit_table_0_exp_mean <-
+  aggregate(
+    cosmic_hit_table_0$Exp,
+    by = list(cosmic_hit_table_0$GENE),
+    FUN = mean,
+    na.rm = TRUE
+  )
+
+cosmic_hit_table_0_exp_median <-
+  aggregate(
+    cosmic_hit_table_0$Exp,
+    by = list(cosmic_hit_table_0$GENE),
+    FUN = median,
+    na.rm = TRUE
+  )
+
+cosmic_hit_table_0_mut <-
+  aggregate(
+    cosmic_hit_table_0$mut,
+    by = list(cosmic_hit_table_0$GENE),
+    FUN = mean,
+    na.rm = TRUE
+  )
+
+colnames(cosmic_hit_table_1_count) = c("GENE", "Count")
+colnames(cosmic_hit_table_1_exp_mean) = c("GENE", "PS_Mean_Exp")
+colnames(cosmic_hit_table_1_mut) = c("GENE", "PS_Mut")
+colnames(cosmic_hit_table_0_exp_mean) = c("GENE", "Other_Mean_Exp")
+colnames(cosmic_hit_table_0_mut) = c("GENE", "Other_Mut")
+colnames(cosmic_hit_table_0_exp_median) = c("GENE", "Other_Median_Exp")
+colnames(cosmic_hit_table_1_exp_median) = c("GENE", "PS_Median_Exp")
+
+cosmic_hit_table <-
+  do.call(
+    "cbind",
+    list(
+      cosmic_hit_table_1_count,
+      cosmic_hit_table_1_exp_mean,
+      cosmic_hit_table_0_exp_mean,
+      cosmic_hit_table_1_exp_median,
+      cosmic_hit_table_0_exp_median,
+      cosmic_hit_table_1_mut,
+      cosmic_hit_table_0_mut
+    )
+  )
+
+cosmic_hit_table <- cosmic_hit_table[, !duplicated(colnames(cosmic_hit_table))]
+
+head(cosmic_hit_table)
+
+colnames(hit_test) <- c("GENE","Expression_Compare_Wilcox_Test_p","Mutations_Compare_Fisher_Test_p")
+
+cosmic_hit_table <- merge(cosmic_hit_table,hit_test) 
+
+#write_delim(format(cosmic_hit_table, digits=4), "./Data/Supplementary_Table_1.txt", delim = "\t")
+
+```
+
+##Supplementary Figure 2C
+Plotting density plot difference between Expression and mutation rates
+```{r ps_mean_difference_exp}
+cosmic_hit_table$Diff_Exp = cosmic_hit_table$PS_Mean_Exp - cosmic_hit_table$Other_Mean_Exp
+
+cosmic_hit_table$Diff_mut = cosmic_hit_table$PS_Mut - cosmic_hit_table$Other_Mut
+
+cosmic_hit_table %>% ggplot(aes(x = Diff_Exp)) + geom_density() + geom_vline(xintercept = 0,color = "red") + 
+  theme_Publication() + xlab("Δ Mean Gene Expression \n Mean PS - Mean Non PS")
+```
+
+##Supplementary Figure 2D
+```{r ps_mean_difference_mut}
+cosmic_hit_table %>% ggplot(aes(x = Diff_mut)) + geom_density() + geom_vline(xintercept = 0,color = "red") + 
+  theme_Publication() + xlab("Δ Mean Mutation Rate \n Mean PS - Mean Non PS")
+```
+
+##Alternative Supplementary Figure 2C
+Plotting boxplot difference between Expression and mutation rates
+```{r alternate_ps_mean_difference_exp}
+temp1 <- cosmic_hit_table %>% dplyr::select(PS_Mean_Exp) 
+temp1$Type <- "PS"
+colnames(temp1)[1] <- "Gene_Exp"
+temp2 <- cosmic_hit_table %>% dplyr::select(Other_Mean_Exp) 
+temp2$Type <- "Other"
+colnames(temp2)[1] <- "Gene_Exp"
+
+plot_df <- rbind(temp1,temp2)
+plot_df %>% ggplot(aes(y = Gene_Exp, x = Type)) + geom_beeswarm() + theme_Publication()+ ylab("Mean Expression") + stat_compare_means(method = "wilcox") + 
+stat_summary(fun = median, color = "red",
+             geom = "point")
+```
+
+##Alternative Supplementary Figure 2D
+```{r alternate_ps_mean_difference_mut}
+temp1 <- cosmic_hit_table %>% dplyr::select(PS_Mut) 
+temp1$Type <- "PS"
+colnames(temp1)[1] <- "Gene_Mut"
+temp2 <- cosmic_hit_table %>% dplyr::select(Other_Mut) 
+temp2$Type <- "Other"
+colnames(temp2)[1] <- "Gene_Mut"
+
+plot_df <- rbind(temp1,temp2)
+plot_df %>% ggplot(aes(y = Gene_Mut, x = Type)) + geom_beeswarm() + theme_Publication()+ ylab("Mean Mutation Rate") + stat_compare_means(method = "wilcox")+ 
+stat_summary(fun = median, color = "red",
+             geom = "point")
+```
+
+##Supplementary Figure 2A  - TSG Representation
+At some point R plotting code was broken for 2A & 2B. X Axis needed to be changed to factor instead of numeric. As such, the X intercept in this code is slight shifted to 5.25, as opposed to 5.24. X intercept at 5.24 used for manuscript. Data remains the same. 
+```{r TSG_rep}
+######## Shuffled_FC TSG Rep
+
+###Cleaning variables from above
+rm(
+  cosmic_hit_genes,
+  cosmic_hit_table_1_exp_mean,
+  cosmic_hit_table_0_exp_median,
+  cosmic_hit_table_0_exp_mean,
+  cosmic_hit_table_1_exp_median,
+  cosmic_hit_table,
+  cosmic_hit_table_0,
+  cosmic_hit_table_0_exp,
+  cosmic_hit_table_0_mut,
+  cosmic_hit_table_1,
+  cosmic_hit_table_1_count,
+  cosmic_hit_table_1_exp,
+  cosmic_hit_table_1_mut
+)
+
+###binning representation in 0.25 increments of positive z-score 
+other = c()
+TSG = c()
+Frame = seq(0, 25, by = 0.25)
+
+for (i in Frame) {
+  temp <- avana_res %>%
+    filter(Mod_Z_Score > i)
+  other = c(other, length(temp$Cosmic_TSG[temp$Cosmic_TSG == 0]))
+  TSG = c(TSG, length(temp$Cosmic_TSG[temp$Cosmic_TSG == 1]))
+}
+
+TSG_Comparison <- data_frame(TSG, Frame)
+TSG_Comparison2 <- data_frame(other, Frame)
+try <- merge(TSG_Comparison, TSG_Comparison2)
+TSG_Comparison$Type = "COSMIC TSG"
+TSG_Comparison2$Type = "Other Genes"
+
+colnames(TSG_Comparison) <- c("Count", "Frame", "Type")
+colnames(TSG_Comparison2) <- c("Count", "Frame", "Type")
+
+TSG_Comparison <- rbind(TSG_Comparison, TSG_Comparison2)
+
+a <-
+  TSG_Comparison %>% filter(Frame < 20) %>%
+  ggplot( aes(x = as.factor(Frame), y = Count, fill = Type)) +
+  geom_bar(position = 'fill',
+           stat = "identity",
+           width = 1) +
+  xlab("Shuffled Z-Score)")+
+  geom_vline(xintercept = "5.25", color = "black") +
+  scale_y_continuous(labels = scales::percent_format()) +
+  ylab("Percentage of Representation") +
+  scale_fill_manual(values = c("#469c83", "#d8dee6")) + #,
+  #   name = c("Gene Representation"),
+  #   guide = guide_legend(direction = "horizontal")) +)
+  theme_Publication() + theme(legend.position = "none")
+
+a
+```
+
+##Supplementary Figure 2B  - TSG Representation, Histogram
+Uses geom_bar due to plot a similarity and ease. 
+```{r TSG_rep_hist}
+b <- 
+  TSG_Comparison %>% filter(Frame < 20) %>%
+  ggplot( aes(x = as.factor(Frame), y = Count, fill = Type)) +
+  geom_bar(stat = "identity", width = 1) +
+  #scale_y_continuous(labels = scales::percent_format()) +
+  xlab("Shuffled Z-Score") +
+  geom_vline(xintercept = "5.25", color = "black") +
+  #ylab("Percentage of Representation") +
+  ylab("Number of Genes") +
+  scale_fill_manual(
+    values = c("#469c83", "#d8dee6"),
+    name = c("Gene Representation"),
+    guide = guide_legend(direction = "vertical")
+  ) + scale_y_log10() +
+  theme_Publication() + theme(legend.position = "none") #+theme(legend.title = element_blank())
+b
+```
+
+##Supplementary Figure 1G  - Tissue Type Identification
+```{r TSG_hit_tissue}
+cell_meta <-
+  cell_line_key %>% dplyr::select(DepMap_ID, `Primary Disease`)
+
+colnames(cell_meta) = c("Cell_Line", "Disease_Type")
+
+avana_res <- merge(avana_res, cell_meta)
+
+head(avana_res)
+
+cells <-
+  avana_res %>% dplyr::select(Cell_Line, Disease_Type) %>% unique()
+
+cells_hits <-
+  avana_res %>% filter(hit == 1) %>% dplyr::select(Cell_Line, Disease_Type) %>% droplevels() %>% unique()
+
+cells$hit = "No Hit"
+
+cells$hit[cells$Cell_Line %in% cells_hits$Cell_Line] = "Hit Found"
+
+cells_tab <-
+  as.matrix(table(cells$Disease_Type, cells$hit))
+#cells %>% ggplot(aes(x = Disease_Type, fill = hit)) + geom_bar(stat = "count", position="stack") +  theme_Publication() + theme(axis.text.x = element_text(angle = 90, hjust = 1,size = 10))
+
+par(las = 1, mar = c(18, 2.5, 2, 2))
+
+barplot(
+  t(cells_tab),
+  #col=colors()[c(23,89)] ,
+  col = c("#469c83", "#ffffff"),
+  border = "black",
+  font.axis = 2,
+  #beside=T,
+  las = 2,
+  #xlab="group",
+  font.lab = 1,
+  cex.names = 1.5,
+  cex.axis = 1.5
+)
+#legend("topright",legend = colnames(cells_tab),fill = colors()[c(23,89)],cex = 1.5)
+legend(
+  "topright",
+  legend = colnames(cells_tab),
+  fill = c("#469c83", "#ffffff"),
+  cex = 1.5
+)
+
+```
+
+##Figure 1G  - Tissue Type Identification
+```{r complex_heatmap_genomics}
+CCLE_mutations <-
+  read.csv("Data/CCLE_mutations.csv")
+PTEN_CN <-
+  read.delim("Data/PTEN_CN.txt")
+CCLE_mutations <-
+  CCLE_mutations %>% filter(Hugo_Symbol %in% c("TP53", "PTEN")) %>%
+  filter(Variant_Classification != "Silent") %>%
+  dplyr::select(Hugo_Symbol, DepMap_ID) %>%
+  unique()
+
+temp_cosmic <-
+  temp_hits %>% filter(Cosmic_TSG == 1)
+tab <- table(temp_cosmic$GENE)
+
+tab <- tab %>% sort(decreasing = TRUE)
+tab <- tab[tab > 7]
+
+picked_genes <- names(tab)
+
+temp_hits <-
+  avana_res %>% filter(GENE %in% picked_genes) %>% #filter(Cosmic_TSG == 1) %>%
+  droplevels() %>% dplyr::select(GENE, Cell_Line, hit) %>% unique() %>% spread(Cell_Line, hit)
+#head(temp_hits)
+#temp_hits %>%
+#temp <- temp_hits[-1][colSums(temp_hits[-1]) > 0]
+#temp_hits <- temp_hits %>% dplyr::select(GENE,colnames(temp))
+
+#####Selecting the top genes
+
+rownames(temp_hits) = temp_hits$GENE
+temp_hits$GENE = NULL
+tab
+PTEN_Cells <-
+  avana_res %>% filter(GENE == "PTEN") %>% filter(hit == 1) %>% pull(Cell_Line) %>% droplevels() %>% as.vector()
+TP53_Cells <-
+  avana_res %>% filter(GENE == "TP53") %>% filter(hit == 1) %>% pull(Cell_Line) %>% droplevels() %>% as.vector()
+NF2_Cells <-
+  avana_res %>% filter(GENE == "NF2") %>% filter(hit == 1) %>% pull(Cell_Line) %>% droplevels() %>% as.vector()
+TSC1_Cells <-
+  avana_res %>% filter(GENE == "TSC1") %>% filter(hit == 1) %>% pull(Cell_Line) %>% droplevels() %>% as.vector()
+TSC2_Cells <-
+  avana_res %>% filter(GENE == "TSC2") %>% filter(hit == 1) %>% pull(Cell_Line) %>% droplevels() %>% as.vector()
+KEAP1_Cells <-
+  avana_res %>% filter(GENE == "KEAP1") %>% filter(hit == 1) %>% pull(Cell_Line) %>% droplevels() %>% as.vector()
+CDKN1A_Cells <-
+  avana_res %>% filter(GENE == "CDKN1A") %>% filter(hit == 1) %>% pull(Cell_Line) %>% droplevels() %>% as.vector()
+CDKN2C_Cells <-
+  avana_res %>% filter(GENE == "CDKN2C") %>% filter(hit == 1) %>% pull(Cell_Line) %>% droplevels() %>% as.vector()
+EP300_Cells <-
+  avana_res %>% filter(GENE == "EP300") %>% filter(hit == 1) %>% pull(Cell_Line) %>% droplevels() %>% as.vector()
+ARNT_Cells <-
+  avana_res %>% filter(GENE == "ARNT") %>% filter(hit == 1) %>% pull(Cell_Line) %>% droplevels() %>% as.vector()
+NF1_Cells <-
+  avana_res %>% filter(GENE == "NF1") %>% filter(hit == 1) %>% pull(Cell_Line) %>% droplevels() %>% as.vector()
+CHEK2_Cells <-
+  avana_res %>% filter(GENE == "CHEK2") %>% filter(hit == 1) %>% pull(Cell_Line) %>% droplevels() %>% as.vector()
+RB1_Cells <-
+  avana_res %>% filter(GENE == "RB1") %>% filter(hit == 1) %>% pull(Cell_Line) %>% droplevels() %>% as.vector()
+
+Other_Cells <-
+  avana_res %>% #filter(Cell_Line %in% colnames(temp)) %>%
+  filter(
+    Cell_Line %!in% c(
+      PTEN_Cells,
+      TP53_Cells,
+      NF2_Cells,
+      TSC1_Cells,
+      TSC2_Cells,
+      KEAP1_Cells,
+      CDKN1A_Cells,
+      CDKN2C_Cells,
+      EP300_Cells,
+      ARNT_Cells,
+      NF1_Cells,
+      CHEK2_Cells,
+      RB1_Cells
+    )
+  ) %>%
+  pull(Cell_Line) %>% droplevels() %>% as.vector() %>% unique()
+
+###Setting order by ascending number of gene hits (TSGs with highest gene count)
+
+temp_hits <-
+  temp_hits[unique(
+    c(
+      PTEN_Cells,
+      TP53_Cells,
+      NF2_Cells,
+      TSC1_Cells,
+      TSC2_Cells,
+      KEAP1_Cells,
+      CDKN1A_Cells,
+      CDKN2C_Cells,
+      EP300_Cells,
+      ARNT_Cells,
+      NF1_Cells,
+      CHEK2_Cells,
+      RB1_Cells,
+      Other_Cells
+    )
+  )]
+order = names(tab)
+temp_hits <-
+  temp_hits[match(order, rownames(temp_hits)),]
+
+PTEN_CN_cells = as.vector(integer(length(colnames(temp_hits))))
+TP53_mut = as.vector(integer(length(colnames(temp_hits))))
+PTEN_mut = as.vector(integer(length(colnames(temp_hits))))
+pten_muts <-
+  CCLE_mutations$DepMap_ID[CCLE_mutations$Hugo_Symbol == "PTEN"]
+pten_muts <-
+  as.vector(pten_muts[pten_muts %in% colnames(temp_hits)])
+tp53_muts <-
+  CCLE_mutations$DepMap_ID[CCLE_mutations$Hugo_Symbol == "TP53"]
+
+#####0.3 represents a good marker of PTEN CN status for this particular dataset. It shouldn't be used as an absolute.
+
+pten_CN_loss <-
+  as.vector(PTEN_CN$Cell_Line[PTEN_CN$PTEN_CN < 0.3])
+tp53_muts <-
+  as.vector(tp53_muts[tp53_muts %in% colnames(temp_hits)])
+pten_CN_loss <-
+  as.vector(pten_CN_loss[pten_CN_loss %in% colnames(temp_hits)])
+TP53_mut[colnames(temp_hits) %in% CCLE_mutations$DepMap_ID[CCLE_mutations$Hugo_Symbol == "TP53"]] = 1
+PTEN_CN_cells[colnames(temp_hits) %in% pten_CN_loss] = -1
+PTEN_mut[colnames(temp_hits) %in% CCLE_mutations$DepMap_ID[CCLE_mutations$Hugo_Symbol == "PTEN"]] = 1
+
+col_fun = colorRamp2(c(-1, 0, 1), c("#294ef2", "#f2eded", "#de962a"))
+#col_fun = colorRamp2(c(-1,0, 1), c("#294ef2","#f2eded","#de962a"))
+
+col = list(foo = col_fun)
+
+###top heatmap annotation for mutations and copy number
+
+ha1 <-
+  HeatmapAnnotation(
+    foo = cbind(
+      TP53_Mutation = TP53_mut,
+      PTEN_Mutation = PTEN_mut,
+      PTEN_CN_Loss = PTEN_CN_cells
+    ),
+    annotation_name_side = "right",
+    col = col,
+    show_legend = c("foo" = FALSE),
+    show_annotation_name = c(foo = TRUE),
+    # only turn off `bar`
+    height = unit(1.5, "cm"),
+    name = "foo_ann"
+  )
+
+cols = c("#ffffff", "#469c83")
+
+# pdf(
+#   "./paper_figs_code/fig/2-Mutual_Exclus_Heatmap.pdf",
+#   width = 10,
+#   height = 10
+# )
+Heatmap(
+  as.matrix(temp_hits),
+  col = cols,
+  cluster_rows = FALSE,
+  cluster_columns = FALSE,
+  top_annotation = ha1,
+  name = "foo",
+  show_heatmap_legend = FALSE  #Colv=NA,scale = "none", col = cols,Rowv = NA
+)
+decorate_heatmap_body("foo", {
+  grid.rect(gp = gpar(fill = "transparent", col = "black", lwd = 1))
+})
+
+```
+
+```{r reset}
+rm(list = ls())
+if (is.integer(dev.list())) {
+  dev.off()
+}
+```

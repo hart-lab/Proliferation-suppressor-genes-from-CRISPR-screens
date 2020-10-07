@@ -1,0 +1,120 @@
+---
+title: "Data Assembly Pipeline"
+output: html_document
+---
+
+The following coding pipeline is put together to assemble the avana_output.txt data file that is used in subsequent analysis.
+
+```{r setup, include=FALSE}
+rm(list = ls())
+if (is.integer(dev.list())){dev.off()}
+cat("\014")
+set.seed(1)
+source("functions.R")
+```
+
+```{r data_load}
+dat <- read.delim("Data/Avana_Shuffle_Corrected_FC.txt") ### Corrected Fold_Change 
+cell_line_key <- read_csv("Data/DepMap-2018q4-celllines.csv") ### Cell Line Meta Data
+```
+
+```{r data_manipulation_exp}
+exp_data <- read.delim("Data/CCLE_depMap_19Q1_TPM.mod.all.tsv") ### CCLE Expression
+exp_data  <- exp_data %>% gather(Cell_Line,Exp,-X) 
+exp_data$Cell_Line = gsub("[.]","-",exp_data$Cell_Line) ### Matching string types
+colnames(exp_data)[1] <- "GENE_Exp" 
+exp_data <- exp_data %>% filter(Cell_Line %in% dat$Cell_Line) ### Filtering for cell lines that are present
+
+V1 <- as.vector(as.character(dat$GENE)) ### Adding entrez id to fold change
+entrez_IDS <- mapIds(org.Hs.eg.db, V1, 'ENTREZID', 'SYMBOL')
+dat$entrez_ID = entrez_IDS
+
+V1 <- as.vector(as.character(exp_data$GENE)) ### Add entrez to exp data 
+entrez_IDS <- mapIds(org.Hs.eg.db, V1, 'ENTREZID', 'SYMBOL')
+exp_data$entrez_ID = entrez_IDS
+
+exp_data <- exp_data %>% filter(!is.na(entrez_ID)) ### Removing NA entrez genes
+rm(V1,entrez_IDS)
+
+dat <- merge(dat,exp_data,all.x = TRUE) ### Adding exp for data
+
+rm(exp_data)
+```
+
+
+```{r mut_data_manipulation}
+mut_data <- read.csv("Data/CCLE_mutations.csv") ### CCLE Mutations
+mut_data <- mut_data %>% filter(Variant_Classification != "Silent") %>% dplyr::select(Entrez_Gene_Id,DepMap_ID) ### Filtering out silent mutations
+mut_data$key = paste(mut_data$Entrez_Gene_Id,mut_data$DepMap_ID) ### Creating key of Entrez_Cell-Line
+dat$key = paste(dat$entrez_ID,dat$Cell_Line)
+
+### Binary classifcation of mutation
+dat$mut = 0
+dat$mut[dat$key %in% mut_data$key] = 1
+
+rm(mut_data)
+```
+
+```{r data_manipulation_tsg}
+
+cancer_gene_census <- read_csv("Data/cancer_gene_census.csv") ### Cancer Gene Census
+NEGv1 <- read.delim("Data/NEGv1.txt") ### Non-Essential Gene Set
+print(unique(cancer_gene_census$`Role in Cancer`))
+
+oncogenes_all <- cancer_gene_census %>% filter(`Role in Cancer` %in%  c("oncogene, fusion","oncogene","fushion")) %>% ### Pulling all oncogenes observations that aren't TSG
+  droplevels() %>% pull(`Entrez GeneId`) %>% unique()
+
+cosmic_tsg <- cancer_gene_census %>% ### Pulling all TSG observations
+  filter(grepl("TSG",`Role in Cancer` ))
+
+dat$Cosmic_TSG = 0 ### Binary classification, TSG 
+dat$Cosmic_TSG[dat$entrez_ID %in% cosmic_tsg$`Entrez GeneId`] = 1
+
+dat$NEG = 0 ### Binary classification, Non essential gene
+dat$NEG[dat$entrez_ID %in% NEGv1$ENTREZ_ID] = 1
+
+dat$Mod_Z_Score = (dat$MEAN_FC - dat$MEAN_FC_Shuffle_Mean)/dat$SD_Shuffle_Mean ### Calculating the shuffled Z Score
+dat$ranking <- ave(dat$MEAN_FC, dat$Cell_Line, FUN = rank) ### Calculating the rank score of Mean FC
+
+``` 
+
+```{r fdr_cutoff}
+### Generating FDR calculations to determine if observation is a hit.
+oncogenes_scores <- dat %>% filter(entrez_ID %in% oncogenes_all) %>% droplevels() %>% pull(Mod_Z_Score)
+NEG_scores <- dat %>% filter(NEG == 1) %>% droplevels() %>% pull(Mod_Z_Score)
+tsg_scores <- dat %>% filter(Cosmic_TSG == 1) %>% droplevels() %>% pull(Mod_Z_Score)
+
+FP = c(oncogenes_scores,NEG_scores) ### FP defined as Non-Essential Genes + non TSG oncogene scores
+
+pr1 <- pr.curve(scores.class0 = tsg_scores , scores.class1 = FP, curve = TRUE) ### Calculating the PR curve
+
+res_data <- as.data.frame(pr1$curve) ### Pulling the resulting curve
+colnames(res_data) = c("Recall","Precision","Mod_Z_Score")
+
+res_data$Precision <- round(res_data$Precision,4) ### Rounding the precision
+cutoff <- res_data %>% filter(Precision < 0.90000) %>% pull(Mod_Z_Score) %>% max() ### Finding the max Z-Score observed at this threshold - Z-score cutoff
+
+rm(res_data,pr1,cosmic_tsg)
+
+print(cutoff)
+
+dat <- dat %>% dplyr::select(-key)
+
+###Rounding for data storage purposes
+dat$Mod_Z_Score = round(x = dat$Mod_Z_Score,5)
+dat$Exp = round(x = dat$Exp,5)
+
+avana_res <- dat
+
+###binary definition of PS hit
+avana_res$hit = 0
+avana_res$hit[avana_res$Mod_Z_Score > cutoff] = 1
+
+avana_res <- avana_res %>% filter(!is.na(avana_res$entrez_ID))
+
+rm(dat)
+
+write_delim(avana_res,path = "Data/avana_output.txt",delim = "\t")
+```
+
+

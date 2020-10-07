@@ -1,0 +1,192 @@
+---
+title: "Figure 3"
+output:
+  html_document:
+    df_print: paged
+---
+
+###Code used for Figure 3
+The following script was used to produce some of the figures seen in Figure 3, and Supplemental Figure 5
+
+```{r}
+rm(list = ls())
+if (is.integer(dev.list())){dev.off()}
+cat("\014")
+set.seed(1)
+source("functions.R")
+```
+
+
+Loading in data used
+```{r data_load}
+avana_res <- read.delim("Data/avana_output_v2.txt")
+seed_cluster_correlated <- read.csv("Data/seed_cluster_correlated.csv") ### edges determined by dPCC methods
+cell_line_key <- read_csv("Data/DepMap-2018q4-celllines.csv")
+cell_key <- cell_line_key %>% dplyr::select(DepMap_ID,`Subtype Disease`,CCLE_Name)
+colnames(cell_key) = c('Cell_Line',"Subtype","CCLE")
+rm(cell_line_key)
+```
+
+####Making gene x gene comparison
+Using 5 genes from the cluster for gene x gene plots
+
+```{r gene_by_gene}
+gene_dat <- avana_res %>% filter(GENE %in% c("GPI","FASN","GPAT4","ACACA","CHP1")) %>% dplyr::select(GENE,Cell_Line,Mod_Z_Score)
+
+gene_dat <- spread(gene_dat,GENE,Mod_Z_Score)
+gene_dat <- merge(gene_dat,cell_key)
+
+gene_dat$Cancer_Type = "Other"
+gene_dat$Cancer_Type[gene_dat$Subtype == "Acute Myelogenous Leukemia (AML)"] = "AML"
+
+#pdf("/export/wflenoir/TSG/paper_figs_code/fig/3-FASN_GPAT4.pdf",height = 10,width=10)
+gene_dat %>% ggplot(aes(FASN,GPAT4,color = Cancer_Type)) +
+  geom_point(alpha = 0.5,size = 3) +
+  scale_color_manual(values=c("#f03c4e","#5c5c5c")) + xlab("FASN Mod-Z-Score") + ylab("GPAT4 Mod-Z-Score") +
+  theme_Publication() + geom_smooth(method = "lm", se = FALSE,size = 1.5) +
+  stat_cor(aes(color = Cancer_Type),method = "pearson",label.x.npc = 0.5) + theme(legend.position='none')
+#dev.off()
+
+#pdf("/export/wflenoir/TSG/paper_figs_code/fig/3-FASN_GPI.pdf",height = 10,width=10)
+gene_dat %>% ggplot(aes(FASN,GPI,color = Cancer_Type)) +
+  geom_point(alpha = 0.5,size = 3) +
+  scale_color_manual(values=c("#f03c4e","#5c5c5c")) + xlab("FASN Mod-Z-Score") + ylab("GPI Mod-Z-Score") +
+  theme_Publication() + geom_smooth(method = "lm", se = FALSE,size = 1.5) +
+  stat_cor(aes(color = Cancer_Type),method = "pearson",label.x.npc = 0.5) + theme(legend.position='none')
+#dev.off()
+
+#pdf("/export/wflenoir/TSG/paper_figs_code/fig/3-FASN_CHP1.pdf",height = 10,width=10)
+gene_dat %>% ggplot(aes(FASN,CHP1,color = Cancer_Type)) +
+  geom_point(alpha = 0.5,size = 3) +
+  scale_color_manual(values=c("#f03c4e","#5c5c5c")) + xlab("FASN Mod-Z-Score") + ylab("CHP1 Mod-Z-Score") +
+  theme_Publication() + geom_smooth(method = "lm", se = FALSE,size = 1.5) +
+  stat_cor(aes(color = Cancer_Type),method = "pearson",label.x.npc = 0.5) + theme(legend.position='none')
+#dev.off()
+
+#pdf("/export/wflenoir/TSG/paper_figs_code/fig/3-FASN_ACACA.pdf",height = 10,width=10)
+gene_dat %>% ggplot(aes(FASN,ACACA,color = Cancer_Type)) +
+  geom_point(alpha = 0.5,size = 3) +
+  scale_color_manual(values=c("#f03c4e","#5c5c5c")) + xlab("FASN Mod-Z-Score") + ylab("ACACA Mod-Z-Score") +
+  theme_Publication() + geom_smooth(method = "lm", se = FALSE,size = 1.5) +
+  stat_cor(aes(color = Cancer_Type),method = "pearson",label.x.npc = 0.5) + theme(legend.position='none')
+#dev.off()
+
+#pdf("/export/wflenoir/TSG/paper_figs_code/fig/3-GPI_GPAT4.pdf",height = 10,width=10)
+gene_dat %>% ggplot(aes(GPI,GPAT4,color = Cancer_Type)) +
+  geom_point(alpha = 0.5,size = 3) +
+  scale_color_manual(values=c("#f03c4e","#5c5c5c")) + xlab("GPI Mod-Z-Score") + ylab("GPAT4 Mod-Z-Score") +
+  theme_Publication() + geom_smooth(method = "lm", se = FALSE,size = 1.5) +
+  stat_cor(aes(color = Cancer_Type),method = "pearson",label.x.npc = 0.5) + theme(legend.position='none')
+#dev.off()
+
+#pdf("/export/wflenoir/TSG/paper_figs_code/fig/3-GPI_CHP1.pdf",height = 10,width=10)
+gene_dat %>% ggplot(aes(GPI,CHP1,color = Cancer_Type)) +
+  geom_point(alpha = 0.5,size = 3) +
+  scale_color_manual(values=c("#f03c4e","#5c5c5c")) + xlab("GPI Mod-Z-Score") + ylab("CHP1 Mod-Z-Score") +
+  theme_Publication() + geom_smooth(method = "lm", se = FALSE,size = 1.5) +
+  stat_cor(aes(color = Cancer_Type),method = "pearson",label.x.npc = 0.5) + theme(legend.position='none')
+#dev.off()
+
+#pdf("/export/wflenoir/TSG/paper_figs_code/fig/3-GPI_ACACA.pdf",height = 10,width=10)
+gene_dat %>% ggplot(aes(GPI,ACACA,color = Cancer_Type)) +
+  geom_point(alpha = 0.5,size = 3) +
+  scale_color_manual(values=c("#f03c4e","#5c5c5c")) + xlab("GPI Mod-Z-Score") + ylab("ACACA Mod-Z-Score") +
+  theme_Publication() + geom_smooth(method = "lm", se = FALSE,size = 1.5) +
+  stat_cor(aes(color = Cancer_Type),method = "pearson",label.x.npc = 0.5) + theme(legend.position='none')
+#dev.off()
+
+#pdf("/export/wflenoir/TSG/paper_figs_code/fig/3-GPAT4_ACACA.pdf",height = 10,width=10)
+gene_dat %>% ggplot(aes(GPAT4,ACACA,color = Cancer_Type)) +
+  geom_point(alpha = 0.5,size = 3) +
+  scale_color_manual(values=c("#f03c4e","#5c5c5c")) + xlab("GPAT4 Mod-Z-Score") + ylab("ACACA Mod-Z-Score") +
+  theme_Publication() + geom_smooth(method = "lm", se = FALSE,size = 1.5) +
+  stat_cor(aes(color = Cancer_Type),method = "pearson",label.x.npc = 0.5) + theme(legend.position='none')
+#dev.off()
+
+#pdf("/export/wflenoir/TSG/paper_figs_code/fig/3-GPAT4_CHP1.pdf",height = 10,width=10)
+gene_dat %>% ggplot(aes(GPAT4,CHP1,color = Cancer_Type)) +
+  geom_point(alpha = 0.5,size = 3) +
+  scale_color_manual(values=c("#f03c4e","#5c5c5c")) + xlab("GPAT4 Mod-Z-Score") + ylab("ACACA Mod-Z-Score") +
+  theme_Publication() + geom_smooth(method = "lm", se = FALSE,size = 1.5) +
+  stat_cor(aes(color = Cancer_Type),method = "pearson",label.x.npc = 0.5) + theme(legend.position='none')
+#dev.off()
+
+#pdf("/export/wflenoir/TSG/paper_figs_code/fig/3-CHP1_ACACA.pdf",height = 10,width=10)
+gene_dat %>% ggplot(aes(CHP1,ACACA,color = Cancer_Type)) +
+  geom_point(alpha = 0.5,size = 3) +
+  scale_color_manual(values=c("#f03c4e","#5c5c5c")) + xlab("CHP1 Mod-Z-Score") + ylab("ACACA Mod-Z-Score") +
+  theme_Publication() + geom_smooth(method = "lm", se = FALSE,size = 1.5) +
+  stat_cor(aes(color = Cancer_Type),method = "pearson",label.x.npc = 0.5) + theme(legend.position='none')
+#dev.off()
+```
+
+###dPCC examples that 
+A couple dPCC examples showing that the signal observed is bad, and need to be filtered.
+
+```{r bad_ex_1}
+
+gene_dat <- avana_res %>% filter(GENE %in% c("MYCN","EVPL")) %>% dplyr::select(GENE,Cell_Line,Mod_Z_Score)
+
+gene_dat <- spread(gene_dat,GENE,Mod_Z_Score)
+gene_dat <- merge(gene_dat,cell_key)
+
+gene_dat$Cancer_Type = "Other"
+gene_dat$Cancer_Type[gene_dat$Subtype == "Acute Myelogenous Leukemia (AML)"] = "AML"
+gene_dat_aml <- gene_dat %>% filter(Cancer_Type == "AML")
+
+#pdf("/export/wflenoir/TSG/paper_figs_code/fig/3-EVPL-MYCN.pdf",height = 10,width=10)
+
+gene_dat %>% ggplot(aes(EVPL,MYCN,color = Cancer_Type)) +
+  geom_point(alpha = 0.5,size = 3) +
+  scale_color_manual(values=c("#f03c4e","#5c5c5c")) + xlab("EVPL Mod-Z-Score") + ylab("MYCN Mod-Z-Score") +
+  theme_Publication() + geom_smooth(method = "lm", se = FALSE,size = 1.5) +
+  stat_cor(aes(color = Cancer_Type),method = "pearson",label.x.npc = 0.5) + theme(legend.position='none')
+
+#dev.off()
+```
+
+```{r bad_ex_2}
+
+gene_dat <- avana_res %>% filter(GENE %in% c("ATOH8","KCNK13")) %>% dplyr::select(GENE,Cell_Line,Mod_Z_Score)
+
+gene_dat <- spread(gene_dat,GENE,Mod_Z_Score)
+gene_dat <- merge(gene_dat,cell_key)
+
+gene_dat$Cancer_Type = "Other"
+gene_dat$Cancer_Type[gene_dat$Subtype == "Acute Myelogenous Leukemia (AML)"] = "AML"
+
+#pdf("/export/wflenoir/TSG/paper_figs_code/fig/3-KCNK13-ATOH8.pdf",height = 10,width=10)
+gene_dat %>% ggplot(aes(x = ATOH8, y = KCNK13,color = Cancer_Type)) +
+  geom_point(alpha = 0.5,size = 3) +
+  scale_color_manual(values=c("#f03c4e","#5c5c5c")) + xlab("ATOH8 Mod-Z-Score") + ylab("KCNK13 Mod-Z-Score") +
+  theme_Publication() + geom_smooth(method = "lm", se = FALSE,size = 1.5) +
+  stat_cor(aes(color = Cancer_Type),method = "pearson",label.x.npc = 0.5) + theme(legend.position='none')
+#dev.off()
+```
+
+
+Compiled heatmap of genes selected through dPCC
+```{r heatmap}
+AML_Heatmap <- avana_res %>% filter(GENE %in% seed_cluster_correlated$name) %>% dplyr::select(GENE,Cell_Line,Mod_Z_Score)
+AML_Heatmap <- spread(AML_Heatmap,GENE,Mod_Z_Score)
+AML_Heatmap <- merge(AML_Heatmap,cell_key)
+AML_Heatmap <- AML_Heatmap %>% filter(Subtype == "Acute Myelogenous Leukemia (AML)")
+
+temp <- AML_Heatmap %>% dplyr::select(Cell_Line, CCLE)
+
+rownames(AML_Heatmap) <- map(strsplit(AML_Heatmap$CCLE,"_",fixed = TRUE), 1) %>% unlist()
+AML_Heatmap <- AML_Heatmap %>% dplyr::select(-Cell_Line,-Subtype,-CCLE)
+
+col_fun = colorRamp2(c(-6, 0, 6), c("#e60505",'white',"#69cfff"))
+
+#AML_Heatmap <- AML_Heatmap[match(order(AML_Heatmap$FASN),rownames(AML_Heatmap)),]
+#pdf("../paper_figs_code/fig/AML_Heatmap_bipartite.pdf",width = 15,height = 10)
+Heatmap(
+  as.matrix(AML_Heatmap),col = col_fun, cluster_rows = TRUE,
+  clustering_distance_rows = "pearson",
+  #clustering_distance_columns = "pearson",
+  cluster_columns = TRUE,show_heatmap_legend = TRUE,
+  row_names_gp = gpar(fontsize = 20))
+#dev.off()
+
+```
